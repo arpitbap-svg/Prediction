@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, text
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 app = Flask(__name__, static_folder='static')
-API_BASE = 'https://draw.ar-lottery01.com/WinGo/WinGo_1M/GetHistoryIssuePage.json?pageSize=10&pageNo={page}'
+API_BASE = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json?pageSize=10&pageNo={page}'
 POLL_SECONDS = max(5, int(os.getenv('POLL_SECONDS', '5')))
 DB_URL = os.getenv('DATABASE_URL', '').strip()
 if DB_URL.startswith('postgres://'):
