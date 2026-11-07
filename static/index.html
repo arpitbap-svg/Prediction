@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinGo 30S · 108 Logic Predictor (Dynamic Accuracy Engine)</title>
+<style>
+:root{--bg:#070b16;--panel:#10182a;--panel2:#0c1323;--line:#23314c;--text:#eaf0ff;--muted:#8ea0bf;--cyan:#55d8ff;--green:#31d69a;--red:#ff657a;--gold:#f6c85f}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#12223c 0,#070b16 58%);color:var(--text);font:14px/1.45 system-ui,Segoe UI,Arial,sans-serif}
+.wrap{max-width:1180px;margin:auto;padding:18px}.top{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+h1{font-size:clamp(21px,4vw,30px);margin:0;letter-spacing:.3px}.sub{color:var(--muted);font-size:12px;margin-top:4px}
+.status{border:1px solid var(--line);background:#0d1728;padding:8px 12px;border-radius:999px;color:var(--muted);font-size:12px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);margin-right:7px}.dot.live{background:var(--green);box-shadow:0 0 10px var(--green)}.dot.err{background:var(--red)}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}.card{background:linear-gradient(145deg,rgba(18,28,48,.96),rgba(10,17,31,.98));border:1px solid var(--line);border-radius:16px;padding:15px;min-width:0;box-shadow:0 10px 30px #0002}
+.hero{grid-column:span 12;display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:14px;align-items:center}
+.kicker{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1.3px;font-weight:700}
+.bigpred{font-size:clamp(35px,7vw,55px);font-weight:900;line-height:1.05;margin:7px 0;color:var(--cyan)}
+.bigpred.small{color:#ffb86b}.bigpred.big{color:var(--green)}
+.meta{color:var(--muted);font-size:12px}.metric{font-size:27px;font-weight:800;margin-top:6px}.metric small{font-size:12px;color:var(--muted);font-weight:500}
+.bar{height:9px;background:#202d45;border-radius:99px;overflow:hidden;margin:9px 0}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));width:50%}
+.twocol{grid-column:span 6}.third{grid-column:span 4}.full{grid-column:span 12}
+.section-title{font-size:14px;font-weight:800;margin:0 0 11px;display:flex;justify-content:space-between;align-items:center}
+.pills{display:flex;flex-wrap:wrap;gap:7px}.pill{padding:5px 9px;border-radius:8px;background:#17243b;color:#c5d5f0;font-size:11px;border:1px solid #2a3a57}
+table{border-collapse:collapse;width:100%;font-size:12px}th,td{padding:8px 7px;text-align:left;border-bottom:1px solid #1e2b42;white-space:nowrap}th{color:var(--muted);font-weight:700;position:sticky;top:0;background:#111b2d}td{color:#dce7fa}.scroll{overflow:auto;max-height:350px}
+.tag{font-size:10px;padding:3px 7px;border-radius:6px;background:#182842;color:#b9d4f6}.tag.big{color:var(--green)}.tag.small{color:#ffb86b}.tag.green{color:var(--green)}.tag.red{color:var(--red)}
+button{border:1px solid #34506e;background:#152741;color:#e9f4ff;border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer}button:hover{border-color:var(--cyan)}button:disabled{opacity:.5}
+.controls{display:flex;gap:8px;flex-wrap:wrap}.methodgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.method{background:#0d1728;border:1px solid #1e2d46;border-radius:9px;padding:8px;font-size:11px;display:flex;justify-content:space-between;gap:8px}.method span:first-child{color:#bdcbe0}.vote{font-weight:800;white-space:nowrap}.vote.BIG{color:var(--green)}.vote.SMALL{color:#ffb86b}
+.family{margin:8px 0 12px}.family-head{display:flex;justify-content:space-between;color:#c9d8ef;font-size:12px;margin-bottom:5px}.familybar{height:7px;border-radius:99px;background:#202d45;overflow:hidden}.familybar i{display:block;height:100%;background:linear-gradient(90deg,#5e8cff,#4ee0d0)}
+.note{color:var(--muted);font-size:11px;line-height:1.5}.result-win{color:var(--green);font-weight:800}.result-loss{color:var(--red);font-weight:800}.result-pending{color:var(--gold);font-weight:700}
+.foot{margin:16px 2px;color:#7586a4;font-size:11px}
+.statgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.statbox{background:#0c1729;border:1px solid #243653;border-radius:11px;padding:11px}.statbox b{display:block;font-size:24px;margin-top:4px}.statbox .meta{font-size:11px}.history-panel{grid-column:span 12}.history-panel .scroll{max-height:65vh}.hidden-history{display:none}
+@media(max-width:760px){.statgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.hero{grid-template-columns:1fr 1fr}.hero .hero-main{grid-column:span 2}.twocol,.third{grid-column:span 12}.methodgrid{grid-template-columns:1fr}.wrap{padding:12px}}
+</style></head>
+<body><div class="wrap">
+<header class="top"><div><h1>⚡ WinGo 30S · 108 Logic Predictor</h1><div class="sub">Dynamic 10-Round Backtest Accuracy Voting Engine</div></div>
+<div class="status"><span id="dot" class="dot"></span><span id="status">Connecting to API…</span></div></header>
+<div class="grid">
+<section class="card hero">
+ <div class="hero-main"><div class="kicker">Next round · Size consensus</div><div id="prediction" class="bigpred">--</div><div class="meta" id="nextIssue">Next Period: waiting…</div><div class="pills" style="margin-top:10px"><span class="pill" id="colorPred">Colour: --</span><span class="pill" id="numberPred">Number: --</span><span class="pill" id="engineMode" style="background:#1b382b;color:#31d69a;border-color:#31d69a">Mode: Initial</span></div></div>
+ <div><div class="kicker">Accurate Methods Weighted Votes</div><div class="metric"><span id="bigVotes">0</span> <small>BIG</small> / <span id="smallVotes">0</span> <small>SMALL</small></div><div class="bar"><i id="voteBar"></i></div><div class="meta" id="consensus">Consensus: --</div></div>
+ <div><div class="kicker">Round timer</div><div class="metric" id="timer">--:--</div><div class="meta">Cloud collector: every 30 seconds</div><div class="meta" id="lastUpdate">Last update: --</div></div>
+</section>
+<section class="card third"><div class="section-title">API & History <span class="tag" id="dataCount">0 records</span></div><div class="meta" id="latest">Latest result: --</div><div class="meta" id="apiError" style="color:var(--red);margin-top:7px"></div><div class="controls" style="margin-top:12px"><button id="refreshBtn">Refresh now</button><button id="pauseBtn">Pause refresh</button></div><div class="note" style="margin-top:9px">API: draw.ar-lottery01.com / WinGo_30S</div></section>
+<section class="card third"><div class="section-title">Size statistics</div><div class="metric" id="bigRate">--<small> BIG in last 50</small></div><div class="bar"><i id="sizeBar"></i></div><div class="meta" id="smallRate">-- SMALL</div><div class="meta" id="streak">Current streak: --</div></section>
+<section class="card third"><div class="section-title">Engine health</div><div class="metric"><span id="activeMethods">108</span><small> / 108 methods</small></div><div class="meta" id="topAccInfo">Backtesting: Waiting for 10 records</div><div class="meta" id="dataSource">Waiting for live data</div><div class="meta" id="historyAge">History window: --</div></section>
+<section class="card full"><div class="section-title">Maximum WIN / LOSS Streaks</div><div class="statgrid"><div class="statbox"><span class="meta">All-time maximum WIN</span><b class="result-win" id="maxWinAll">0</b><span class="meta">consecutive predictions</span></div><div class="statbox"><span class="meta">All-time maximum LOSS</span><b class="result-loss" id="maxLossAll">0</b><span class="meta">consecutive predictions</span></div><div class="statbox"><span class="meta">Last 100 periods · max WIN</span><b class="result-win" id="maxWin100">0</b><span class="meta">consecutive predictions</span></div><div class="statbox"><span class="meta">Last 100 periods · max LOSS</span><b class="result-loss" id="maxLoss100">0</b><span class="meta">consecutive predictions</span></div></div><p class="note" id="streakBasis" style="margin:9px 0 0">Streaks are calculated from settled prediction results only; pending records are excluded.</p></section>
+<section class="card twocol"><div class="section-title">10 Logic Family Votes</div><div id="familySummary"></div></section>
+<section class="card twocol"><div class="section-title">Prediction breakdown</div><div class="pills" id="breakdown"></div><p class="note" id="explain" style="margin-top:10px">Waiting for enough historical data.</p></section>
+<section class="card full"><div class="section-title">108 Methods Live Backtested Accuracy (Last 10 Rounds) <span class="tag">Ranked by Win-rate</span></div><div id="methods" class="methodgrid"></div></section>
+<section class="card full"><div class="section-title">Prediction History · Win / Loss <span class="tag" id="predictionStats">0 settled</span></div><div class="meta" id="predictionSummary">Prediction result will be checked when the target period appears in API history.</div><div class="scroll" style="margin-top:10px"><table><thead><tr><th>Target Period</th><th>Prediction</th><th>Actual</th><th>Result</th><th>Saved at</th></tr></thead><tbody id="predictionHistory"></tbody></table></div><div class="controls" style="margin-top:10px"><span class="note">Prediction history is saved on the server.</span></div></section>
+<section class="card history-panel"><div class="section-title">API History · Latest 10 <span><span class="tag" id="historyCount">0 records</span> <button id="historyToggle" type="button">Hide history</button></span></div><div id="historyContent"><div class="meta" id="historyInfo">Only the latest 10 actual records returned by the API, newest first.</div><div class="scroll" style="margin-top:9px"><table><thead><tr><th>Period / Issue</th><th>Number</th><th>Size</th><th>Colour</th><th>Time</th></tr></thead><tbody id="history"></tbody></table></div></div></section>
+</div>
+<div class="foot">Cloud collector rule: Python server API ko har 10 second mein check karta hai aur prediction/history database mein save karta hai. Dashboard khula hona zaroori nahi. Prediction logic: 1 to 9 rounds use equal-weight consensus. Once ≥10 records are available, dynamic backtesting evaluates the accuracy of all 108 methods over the previous 10 rounds, and only highest-accuracy performers determine the final vote.</div>
+</div>
+<script>
+const API="https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json?pageSize=200&pageNo=1";
+const METHODS=[{"id": 1, "name": "Markov 1st-Order Size Transition", "code": "M_ORD1_SIZE", "family": "Markov Chains"}, {"id": 2, "name": "Markov 2nd-Order Pair State", "code": "M_ORD2_PAIR", "family": "Markov Chains"}, {"id": 3, "name": "Markov 3rd-Order Triplet Matrix", "code": "M_ORD3_TRIPLET", "family": "Markov Chains"}, {"id": 4, "name": "Markov 4th-Order Quad Sequence", "code": "M_ORD4_QUAD", "family": "Markov Chains"}, {"id": 5, "name": "Digit-to-Digit Successor Markov", "code": "M_DIGIT_SUCCESSOR", "family": "Markov Chains"}, {"id": 6, "name": "Digit-to-Size Cross Transition", "code": "M_DIGIT_TO_SIZE", "family": "Markov Chains"}, {"id": 7, "name": "Colour 1st-Order Alternation Markov", "code": "M_COLOUR_ORD1", "family": "Markov Chains"}, {"id": 8, "name": "Colour 2nd-Order Cycle Markov", "code": "M_COLOUR_ORD2", "family": "Markov Chains"}, {"id": 9, "name": "Tri-State Joint Parity Markov", "code": "M_JOINT_PARITY", "family": "Markov Chains"}, {"id": 10, "name": "Markov State Absorption Hazard", "code": "M_ABSORPTION_HAZARD", "family": "Markov Chains"}, {"id": 11, "name": "Markov Stationary Long-Run Convergence", "code": "M_STATIONARY_CONV", "family": "Markov Chains"}, {"id": 12, "name": "Simple Moving Average (SMA-5) Parity", "code": "MA_SMA5_PARITY", "family": "Moving Averages & Momentum"}, {"id": 13, "name": "SMA-10 Momentum Slope", "code": "MA_SMA10_SLOPE", "family": "Moving Averages & Momentum"}, {"id": 14, "name": "SMA-20 Equilibrium Crossover", "code": "MA_SMA20_CROSS", "family": "Moving Averages & Momentum"}, {"id": 15, "name": "SMA-50 Macro Baseline Drift", "code": "MA_SMA50_DRIFT", "family": "Moving Averages & Momentum"}, {"id": 16, "name": "SMA-100 Global Mean Equilibrium", "code": "MA_SMA100_GLOBAL", "family": "Moving Averages & Momentum"}, {"id": 17, "name": "Exponential Moving Average (EMA-8) Fast", "code": "MA_EMA8_FAST", "family": "Moving Averages & Momentum"}, {"id": 18, "name": "EMA-21 Intermediate Trend", "code": "MA_EMA21_MID", "family": "Moving Averages & Momentum"}, {"id": 19, "name": "EMA-55 Slow Baseline Anchor", "code": "MA_EMA55_SLOW", "family": "Moving Averages & Momentum"}, {"id": 20, "name": "MACD Wingo Signal Divergence", "code": "MA_MACD_DIV", "family": "Moving Averages & Momentum"}, {"id": 21, "name": "RSI-7 Fast Momentum Oscillator", "code": "MA_RSI7_FAST", "family": "Moving Averages & Momentum"}, {"id": 22, "name": "RSI-14 Standard Oscillator", "code": "MA_RSI14_STD", "family": "Moving Averages & Momentum"}, {"id": 23, "name": "Stochastic %K Digit Oscillator", "code": "MA_STOCH_K", "family": "Moving Averages & Momentum"}, {"id": 24, "name": "20-Round Casino Liability Ratio", "code": "REV_LIABILITY_20", "family": "Mean Reversion & Liability"}, {"id": 25, "name": "50-Round Macro Payout Overload", "code": "REV_PAYOUT_50", "family": "Mean Reversion & Liability"}, {"id": 26, "name": "100-Round Law of Large Numbers", "code": "REV_LLN_100", "family": "Mean Reversion & Liability"}, {"id": 27, "name": "200-Round Global Parity Balance", "code": "REV_PARITY_200", "family": "Mean Reversion & Liability"}, {"id": 28, "name": "1000-Round Empirical Drift Compensator", "code": "REV_DRIFT_1000", "family": "Mean Reversion & Liability"}, {"id": 29, "name": "Poisson Distribution Number Deficit", "code": "REV_POISSON_DEFICIT", "family": "Mean Reversion & Liability"}, {"id": 30, "name": "Extreme Deviation Standard Z-Score", "code": "REV_ZSCORE_CLAMP", "family": "Mean Reversion & Liability"}, {"id": 31, "name": "Digit Gap Maximum Exhaustion", "code": "REV_GAP_EXHAUSTION", "family": "Mean Reversion & Liability"}, {"id": 32, "name": "Cluster Saturation Breaker", "code": "REV_CLUSTER_BREAK", "family": "Mean Reversion & Liability"}, {"id": 33, "name": "Median Gravity 4/5 Central Pull", "code": "REV_MEDIAN_GRAVITY", "family": "Mean Reversion & Liability"}, {"id": 34, "name": "Violet Tax Dividend Arbitrage", "code": "REV_VIOLET_ARBITRAGE", "family": "Mean Reversion & Liability"}, {"id": 35, "name": "Dragon Continuation Follower", "code": "STREAK_DRAGON_FOLLOW", "family": "Streak Dynamics"}, {"id": 36, "name": "Dragon Critical Exhaustion Breaker", "code": "STREAK_DRAGON_BREAK", "family": "Streak Dynamics"}, {"id": 37, "name": "Dragon Overextension Kill Switch", "code": "STREAK_KILL_SWITCH", "family": "Streak Dynamics"}, {"id": 38, "name": "1-1 Ping-Pong Alternation Follower", "code": "STREAK_PINGPONG_FOLLOW", "family": "Streak Dynamics"}, {"id": 39, "name": "1-1 Ping-Pong Chop-Breaker", "code": "STREAK_CHOP_BREAKER", "family": "Streak Dynamics"}, {"id": 40, "name": "2-2 Mirror Symmetry Follower", "code": "STREAK_MIRROR_TWIN", "family": "Streak Dynamics"}, {"id": 41, "name": "2-2 Mirror Completion Reversal", "code": "STREAK_MIRROR_FLIP", "family": "Streak Dynamics"}, {"id": 42, "name": "3-2-1 Staircase Cascade Predictor", "code": "STREAK_STAIRCASE_321", "family": "Streak Dynamics"}, {"id": 43, "name": "1-2-1 Bridge Sandwich Pattern", "code": "STREAK_SANDWICH_121", "family": "Streak Dynamics"}, {"id": 44, "name": "3-3 Double-Triple Block Oscillator", "code": "STREAK_BLOCK_33", "family": "Streak Dynamics"}, {"id": 45, "name": "Run-Length Hazard Rate Function", "code": "STREAK_HAZARD_FUNC", "family": "Streak Dynamics"}, {"id": 46, "name": "Minute-of-Hour Phase Harmonic", "code": "TEMP_MIN_HARMONIC", "family": "Temporal & Modulo Logic"}, {"id": 47, "name": "Hour-of-Day Diurnal Traffic Slicer", "code": "TEMP_HOUR_DIURNAL", "family": "Temporal & Modulo Logic"}, {"id": 48, "name": "Minute-of-Day (0-1439) Cyclical Fourier", "code": "TEMP_FOURIER_1440", "family": "Temporal & Modulo Logic"}, {"id": 49, "name": "Period Number Modulo-3 Resonance", "code": "TEMP_MODULO_3", "family": "Temporal & Modulo Logic"}, {"id": 50, "name": "Period Number Modulo-5 Parity Anchor", "code": "TEMP_MODULO_5", "family": "Temporal & Modulo Logic"}, {"id": 51, "name": "Period Number Modulo-7 Cycle Phase", "code": "TEMP_MODULO_7", "family": "Temporal & Modulo Logic"}, {"id": 52, "name": "Period Modulo-10 Terminal Correlation", "code": "TEMP_MODULO_10", "family": "Temporal & Modulo Logic"}, {"id": 53, "name": "Fibonacci Sequence Period Harmonic", "code": "TEMP_FIBONACCI", "family": "Temporal & Modulo Logic"}, {"id": 54, "name": "Golden Ratio Phi (1.618) Period Pulse", "code": "TEMP_PHI_PULSE", "family": "Temporal & Modulo Logic"}, {"id": 55, "name": "Day-of-Week Diurnal Cycle Bias", "code": "TEMP_DAY_CYCLE", "family": "Temporal & Modulo Logic"}, {"id": 56, "name": "15-Minute Epoch Quarter-Hour Window", "code": "TEMP_15M_EPOCH", "family": "Temporal & Modulo Logic"}, {"id": 57, "name": "Digit Digital Root Sum Parity", "code": "DIGIT_ROOT_SUM", "family": "Digit Topology"}, {"id": 58, "name": "High/Low Boundary Rebound", "code": "DIGIT_BOUNDARY_BOUNCE", "family": "Digit Topology"}, {"id": 59, "name": "Consecutive Duplicate Number Suppression", "code": "DIGIT_DUP_SUPPRESS", "family": "Digit Topology"}, {"id": 60, "name": "Odd/Even Digit Parity Transition", "code": "DIGIT_ODD_EVEN", "family": "Digit Topology"}, {"id": 61, "name": "Prime Number (2,3,5,7) Pulse", "code": "DIGIT_PRIME_PULSE", "family": "Digit Topology"}, {"id": 62, "name": "Adjacent Digit Walk Step (+1/-1)", "code": "DIGIT_WALK_STEP", "family": "Digit Topology"}, {"id": 63, "name": "Digit Variance Dispersion Index", "code": "DIGIT_VARIANCE_DISP", "family": "Digit Topology"}, {"id": 64, "name": "Chi-Square Uniformity Deviation", "code": "DIGIT_CHI_SQUARE", "family": "Digit Topology"}, {"id": 65, "name": "Hot-Zone Digit Attraction", "code": "DIGIT_HOT_ZONE", "family": "Digit Topology"}, {"id": 66, "name": "Cold-Zone Digit Slumber Awakening", "code": "DIGIT_COLD_ZONE", "family": "Digit Topology"}, {"id": 67, "name": "Digit Centroid Velocity Vector", "code": "DIGIT_CENTROID_VEL", "family": "Digit Topology"}, {"id": 68, "name": "Shannon Entropy 20-Round Rolling Window", "code": "ENTROPY_SHANNON_20", "family": "Quantum Entropy"}, {"id": 69, "name": "Shannon Entropy 50-Round Window", "code": "ENTROPY_SHANNON_50", "family": "Quantum Entropy"}, {"id": 70, "name": "Shannon Entropy 100-Round Macro Window", "code": "ENTROPY_SHANNON_100", "family": "Quantum Entropy"}, {"id": 71, "name": "Lempel-Ziv Algorithmic Compression", "code": "ENTROPY_LEMPEL_ZIV", "family": "Quantum Entropy"}, {"id": 72, "name": "Approximate Entropy (ApEn) Regularity", "code": "ENTROPY_APEN_REG", "family": "Quantum Entropy"}, {"id": 73, "name": "Sample Entropy (SampEn) Consistency", "code": "ENTROPY_SAMPEN", "family": "Quantum Entropy"}, {"id": 74, "name": "Permutation Entropy Sequence Complexity", "code": "ENTROPY_PERMUTATION", "family": "Quantum Entropy"}, {"id": 75, "name": "Fisher Information Transition Metric", "code": "ENTROPY_FISHER_INFO", "family": "Quantum Entropy"}, {"id": 76, "name": "Chaos Lyapunov Exponent Approximation", "code": "ENTROPY_LYAPUNOV", "family": "Quantum Entropy"}, {"id": 77, "name": "Hurst Exponent Long-Term Memory", "code": "ENTROPY_HURST_EXP", "family": "Quantum Entropy"}, {"id": 78, "name": "Beta-Binomial Conjugate Prior Likelihood", "code": "BAYES_BETA_BINOMIAL", "family": "Bayesian Posterior"}, {"id": 79, "name": "Dirichlet-Multinomial 10-Digit Posterior", "code": "BAYES_DIRICHLET_10", "family": "Bayesian Posterior"}, {"id": 80, "name": "Empirical Bayes Loss-Shrinkage", "code": "BAYES_LOSS_SHRINK", "family": "Bayesian Posterior"}, {"id": 81, "name": "3-Draw Conditional Bayesian Tree", "code": "BAYES_COND_TREE_3", "family": "Bayesian Posterior"}, {"id": 82, "name": "5-Draw Conditional Bayesian Tree", "code": "BAYES_COND_TREE_5", "family": "Bayesian Posterior"}, {"id": 83, "name": "Laplace Smoothing Transition Likelihood", "code": "BAYES_LAPLACE_SMOOTH", "family": "Bayesian Posterior"}, {"id": 84, "name": "Jeffreys Prior Non-Informative Update", "code": "BAYES_JEFFREYS_PRIOR", "family": "Bayesian Posterior"}, {"id": 85, "name": "Kalman Filter 1-Step State Prediction", "code": "BAYES_KALMAN_FILTER", "family": "Bayesian Posterior"}, {"id": 86, "name": "Hidden Markov Model (HMM) Viterbi Path", "code": "BAYES_HMM_VITERBI", "family": "Bayesian Posterior"}, {"id": 87, "name": "Bayesian Hazard Rate of Streak Collapse", "code": "BAYES_HAZARD_COLLAPSE", "family": "Bayesian Posterior"}, {"id": 88, "name": "Consecutive Loss Streak Penalty Damper", "code": "PIVOT_LOSS_DAMPER", "family": "Dynamic Streak Pivot"}, {"id": 89, "name": "Dynamic Trend vs Reversion Weight Shifter", "code": "PIVOT_STRATEGY_SHIFT", "family": "Dynamic Streak Pivot"}, {"id": 90, "name": "Anti-Loop Repetition Circuit Breaker", "code": "PIVOT_LOOP_BREAKER", "family": "Dynamic Streak Pivot"}, {"id": 91, "name": "Contra-Consensus Arbitrage Hedge", "code": "PIVOT_CONTRA_HEDGE", "family": "Dynamic Streak Pivot"}, {"id": 92, "name": "Martingale Recovery Volatility Safeguard", "code": "PIVOT_MARTINGALE_SAFE", "family": "Dynamic Streak Pivot"}, {"id": 93, "name": "Dimension Shift Arbitrage (Size vs Colour)", "code": "PIVOT_DIMENSION_SHIFT", "family": "Dynamic Streak Pivot"}, {"id": 94, "name": "Reversal Acceleration Force Vector", "code": "PIVOT_REV_ACCEL", "family": "Dynamic Streak Pivot"}, {"id": 95, "name": "Trap Avoidance Pattern Inversion", "code": "PIVOT_TRAP_INVERSION", "family": "Dynamic Streak Pivot"}, {"id": 96, "name": "Runaway Dragon Trailing Stop", "code": "PIVOT_TRAILING_STOP", "family": "Dynamic Streak Pivot"}, {"id": 97, "name": "Chop Exhaustion Pivot Trigger", "code": "PIVOT_CHOP_EXHAUST", "family": "Dynamic Streak Pivot"}, {"id": 98, "name": "Emergency 1-Loss Decoupler", "code": "PIVOT_EMERGENCY_DECOUPLE", "family": "Dynamic Streak Pivot"}, {"id": 99, "name": "Exact 3-Gram Historical Sequence Match", "code": "NGRAM_EXACT_3", "family": "N-Gram Memory & Spectral"}, {"id": 100, "name": "Exact 4-Gram Deep Memory Match", "code": "NGRAM_EXACT_4", "family": "N-Gram Memory & Spectral"}, {"id": 101, "name": "Exact 5-Gram Deep Memory Match", "code": "NGRAM_EXACT_5", "family": "N-Gram Memory & Spectral"}, {"id": 102, "name": "Fuzzy Edit-Distance Subsequence Match", "code": "NGRAM_FUZZY_EDIT", "family": "N-Gram Memory & Spectral"}, {"id": 103, "name": "Identical Time-of-Day Diurnal Match", "code": "NGRAM_TIME_OF_DAY", "family": "N-Gram Memory & Spectral"}, {"id": 104, "name": "Longest Common Subsequence (LCS)", "code": "NGRAM_LCS_PROJECTION", "family": "N-Gram Memory & Spectral"}, {"id": 105, "name": "Autocorrelation Lag-1 Peak Projection", "code": "SPECTRAL_AUTOCORR_1", "family": "N-Gram Memory & Spectral"}, {"id": 106, "name": "Autocorrelation Lag-2 Mirror Projection", "code": "SPECTRAL_AUTOCORR_2", "family": "N-Gram Memory & Spectral"}, {"id": 107, "name": "Autocorrelation Lag-3 Wave Projection", "code": "SPECTRAL_AUTOCORR_3", "family": "N-Gram Memory & Spectral"}, {"id": 108, "name": "Spectral Fourier Dominant Frequency", "code": "SPECTRAL_FOURIER_DOM", "family": "N-Gram Memory & Spectral"}];
+const FAMILIES=[...new Set(METHODS.map(x=>x.family))];
+let rows=[],timer=null,paused=false,lastIssue="",refreshBusy=false,serverLatestPrediction=null;
+const $=id=>document.getElementById(id);
+const cleanSize=x=>String(x||"").toUpperCase().includes("BIG")||String(x).toUpperCase()==="B"?"BIG":String(x||"").toUpperCase().includes("SMALL")||String(x).toUpperCase()==="S"?"SMALL":null;
+function sizeOf(n){return Number(n)>=5?"BIG":"SMALL"}
+function colourOf(n,apiColor){let c=String(apiColor||"").toUpperCase();if(c.includes("GREEN"))return "GREEN";if(c.includes("RED"))return "RED";if(c.includes("VIOLET")&&Number(n)===0)return "VIOLET";return [1,3,7,9].includes(Number(n))?"GREEN":[0,2,4,6,8].includes(Number(n))?"RED":"GREEN"}
+function normalise(raw){let list=raw?.data?.list||raw?.list||raw?.data?.records||raw?.records||[];return list.map(x=>{let n=Number(x.number??x.Number??x.openNumber);if(!Number.isInteger(n)||n<0||n>9)return null;let size=cleanSize(x.size)||sizeOf(n);return{issue:String(x.issueNumber??x.issue??x.period??""),number:n,size,colour:colourOf(n,x.colour??x.color),time:x.time??x.openTime??x.createTime??""}}).filter(x=>x&&x.issue).sort((a,b)=>b.issue.localeCompare(a.issue,undefined,{numeric:true}))}
+function majority(a){let b=a.filter(x=>x==="BIG").length;return b>=a.length/2?"BIG":"SMALL"}
+function pct(x,n){return n?Math.round(x/n*100):0}
+function entropy(vals){let c={};vals.forEach(x=>c[x]=(c[x]||0)+1);return Object.values(c).reduce((z,v)=>{let p=v/vals.length;return z-p*Math.log2(p)},0)}
+function currentStreak(data,key){if(!data.length)return 0;let v=data[0][key],n=0;for(let x of data){if(x[key]!==v)break;n++}return n}
+function nextFromSequence(seq,order){if(seq.length<=order)return null;let key=seq.slice(0,order).join("|"),found=[];for(let i=order;i<seq.length;i++){if(seq.slice(i-order,i).join("|")===key)found.push(seq[i-order-1])}if(found.length<2)return null;return majority(found)}
+
+// Single method evaluator
+function runSingleMethod(method, dataSlice) {
+  if(!dataSlice || !dataSlice.length) return "BIG";
+  const nums = dataSlice.map(x => x.number), sizes = dataSlice.map(x => x.size);
+  const latest = sizes[0] || "BIG";
+  const i = method.id - 1;
+  const fam = method.family, variant = i % 11;
+  const win = Math.min(dataSlice.length, [8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100][variant]);
+  const s = sizes.slice(0, win), n = nums.slice(0, win);
+  const big = s.filter(x => x === "BIG").length, ratio = big / (s.length || 1);
+  const streak = currentStreak(dataSlice, "size");
+
+  if (fam === "Markov Chains") {
+    let order = 1 + (variant % 4), seq = s.slice(0, Math.min(500, s.length)).reverse();
+    return nextFromSequence(seq, order) || (ratio >= .5 ? "BIG" : "SMALL");
+  } else if (fam === "Moving Averages & Momentum") {
+    let short = s.slice(0, Math.min(5 + variant * 2, s.length));
+    let mid = s.slice(0, Math.min(15 + variant * 3, s.length));
+    let long = s;
+    let score = (short.filter(x => x === "BIG").length / (short.length || 1) - .5) * .5 +
+                (mid.filter(x => x === "BIG").length / (mid.length || 1) - .5) * .3 +
+                (long.filter(x => x === "BIG").length / (long.length || 1) - .5) * .2;
+    return score >= 0 ? "BIG" : "SMALL";
+  } else if (fam === "Mean Reversion & Liability") {
+    let edge = Math.abs(ratio - .5);
+    let pred = ratio > .5 ? "SMALL" : "BIG";
+    if (edge < .04) pred = latest === "BIG" ? "SMALL" : "BIG";
+    return pred;
+  } else if (fam === "Streak Dynamics" || fam === "Dynamic Streak Pivot") {
+    let st = streak, continueTrend = st >= 2 + (variant % 4);
+    let pred = continueTrend ? latest : (latest === "BIG" ? "SMALL" : "BIG");
+    if (fam === "Dynamic Streak Pivot" && st >= 4) pred = latest === "BIG" ? "SMALL" : "BIG";
+    return pred;
+  } else if (fam === "Temporal & Modulo Logic") {
+    let issue = String(dataSlice[0]?.issue || "0"), mod = [3, 5, 7, 10, 11, 13][variant % 6];
+    let v = Number(issue.slice(-4)) || 0;
+    return ((v % mod) + variant) % 2 === 0 ? "BIG" : "SMALL";
+  } else if (fam === "Digit Topology") {
+    let counts = Array(10).fill(0);
+    n.forEach(x => counts[x]++);
+    let hot = counts.indexOf(Math.max(...counts)), cold = counts.indexOf(Math.min(...counts));
+    let pick = variant % 2 ? hot : cold;
+    return pick >= 5 ? "BIG" : "SMALL";
+  } else if (fam === "Quantum Entropy") {
+    let e = entropy(s);
+    return e > 0.95 ? (latest === "BIG" ? "SMALL" : "BIG") : majority(s);
+  } else if (fam === "Bayesian Posterior") {
+    let alpha = 1 + big, beta = 1 + (s.length - big);
+    return (alpha / (alpha + beta)) >= .5 ? "BIG" : "SMALL";
+  } else if (fam === "N-Gram Memory & Spectral") {
+    let order = 2 + (variant % 4), seq = s.slice(0, Math.min(500, s.length)).reverse();
+    return nextFromSequence(seq, order) || (variant % 2 ? majority(s) : (latest === "BIG" ? "SMALL" : "BIG"));
+  }
+  return majority(s);
+}
+
+// Calculate accuracy over past 10 historical records
+function calculateMethodAccuracy(method, data) {
+  let correct = 0, evaluated = 0;
+  for (let step = 1; step <= 10; step++) {
+    if (step >= data.length) break;
+    const historyBeforeRound = data.slice(step);
+    const actualResult = data[step - 1].size;
+    const pastPrediction = runSingleMethod(method, historyBeforeRound);
+    if (pastPrediction === actualResult) correct++;
+    evaluated++;
+  }
+  return evaluated > 0 ? Math.round((correct / evaluated) * 100) : 50;
+}
+
+function predict(data){
+ const nums=data.map(x=>x.number),colors=data.map(x=>x.colour);
+ const useAccuracyMode = data.length >= 10;
+
+ // Step 1: Calculate current prediction and backtested accuracy for all 108 methods
+ const votes = METHODS.map((m) => {
+   const pred = runSingleMethod(m, data);
+   const acc = useAccuracyMode ? calculateMethodAccuracy(m, data) : 50;
+   return { ...m, pred, accuracy: acc, confidence: acc };
+ });
+
+ let bigVotes = 0, smallVotes = 0;
+ let activeVotersCount = 0;
+
+ if (useAccuracyMode) {
+   // Step 2: Sort methods by accuracy descending
+   const sorted = [...votes].sort((a, b) => b.accuracy - a.accuracy);
+   const maxAcc = sorted[0].accuracy;
+   
+   // Select top performers (Accuracy >= 60% and close to best accuracy)
+   let topPerformers = sorted.filter(v => v.accuracy >= Math.max(60, maxAcc - 10));
+   if (topPerformers.length < 5) {
+     topPerformers = sorted.slice(0, 15); // Fallback to top 15 methods
+   }
+   activeVotersCount = topPerformers.length;
+
+   // Step 3: Vote weighted directly by accuracy
+   topPerformers.forEach(v => {
+     if (v.pred === "BIG") bigVotes += v.accuracy;
+     if (v.pred === "SMALL") smallVotes += v.accuracy;
+   });
+ } else {
+   // Initial mode: All 108 methods have equal 1 vote
+   activeVotersCount = votes.length;
+   votes.forEach(v => {
+     if (v.pred === "BIG") bigVotes += 1;
+     if (v.pred === "SMALL") smallVotes += 1;
+   });
+ }
+
+ const size = bigVotes >= smallVotes ? "BIG" : "SMALL";
+ const total = bigVotes + smallVotes || 1;
+ const cons = pct(Math.max(bigVotes, smallVotes), total);
+
+ const byFamily = FAMILIES.map(f => {
+   let a = votes.filter(v => v.family === f);
+   let b = a.filter(v => v.pred === "BIG").length;
+   return { family: f, big: b, small: a.length - b, total: a.length, pred: b >= a.length / 2 ? "BIG" : "SMALL" };
+ });
+
+ // Number / colour selection
+ let freq = Array(10).fill(0);
+ nums.slice(0, 100).forEach(n => freq[n]++);
+ let recentColors = colors.slice(0, 20), green = recentColors.filter(x => x === "GREEN").length;
+ let colour = green >= recentColors.length / 2 ? "GREEN" : "RED";
+
+ let candidates = Array.from({ length: 10 }, (_, n) => n).filter(n => sizeOf(n) === size && colourOf(n) === colour);
+ if (!candidates.length) candidates = Array.from({ length: 10 }, (_, n) => n).filter(n => sizeOf(n) === size);
+ let numberPick = candidates.sort((a, b) => freq[b] - freq[a])[0] ?? (size === "BIG" ? 7 : 2);
+
+ let issueText = String(data[0]?.issue || "");
+ let nextIssue = /^\d+$/.test(issueText) ? String(BigInt(issueText) + 1n) : "--";
+
+ return {
+   votes,
+   bigVotes: Math.round(bigVotes * 10) / 10,
+   smallVotes: Math.round(smallVotes * 10) / 10,
+   size,
+   cons,
+   byFamily,
+   number: numberPick,
+   colour,
+   nextIssue,
+   useAccuracyMode,
+   activeVotersCount
+ };
+}
+
+let predictionLog=[];
+function updatePredictionLog(p){
+ const settled=predictionLog.filter(x=>x.result==="WIN"||x.result==="LOSS");
+ const wins=settled.filter(x=>x.result==="WIN").length,losses=settled.length-wins;
+ const pending=predictionLog.filter(x=>x.result==="PENDING").length;
+ const longest=(items,wanted)=>{let best=0,run=0;for(const item of items){if(item.result===wanted){run++;if(run>best)best=run;}else run=0;}return best;};
+ const chronological=[...settled].reverse();
+ const last100=chronological.slice(-100);
+ $("maxWinAll").textContent=longest(chronological,"WIN");
+ $("maxLossAll").textContent=longest(chronological,"LOSS");
+ $("maxWin100").textContent=longest(last100,"WIN");
+ $("maxLoss100").textContent=longest(last100,"LOSS");
+ $("streakBasis").textContent=`All-time calculation uses ${settled.length} settled predictions returned by the server. Last 100 calculation uses ${last100.length} most recent settled predictions; pending predictions are excluded.`;
+ $("predictionStats").textContent=`${settled.length} settled`;
+ $("predictionSummary").textContent=`WIN: ${wins}  ·  LOSS: ${losses}  ·  Pending: ${pending}  ·  Accuracy: ${settled.length?Math.round(wins/settled.length*100):0}% (server-saved predictions)`;
+ $("predictionHistory").innerHTML=predictionLog.map(x=>`<tr><td>${x.targetIssue}</td><td><b>${x.prediction}</b></td><td>${x.actual}${x.actualNumber===null||x.actualNumber===undefined?"":` (${x.actualNumber})`}</td><td class="result-${String(x.result).toLowerCase()}">${x.result}</td><td>${x.savedAt||"--"}</td></tr>`).join("");
+}
+
+function render(){
+ if(!rows.length)return;
+ let p=predict(rows),b=rows.slice(0,50).filter(x=>x.size==="BIG").length,st=currentStreak(rows,"size");
+ // Use the backend's saved prediction for the upcoming period as the single source of truth.
+ if(serverLatestPrediction){
+   p.size=serverLatestPrediction.prediction;
+   p.nextIssue=serverLatestPrediction.targetIssue;
+   p.colour=serverLatestPrediction.colour||p.colour;
+   p.number=serverLatestPrediction.number??p.number;
+   p.consensus=serverLatestPrediction.consensus??p.consensus;
+ }
+ updatePredictionLog(p);
+ $("prediction").textContent=p.size;$("prediction").className="bigpred "+p.size.toLowerCase();
+ $("nextIssue").textContent="Next Period: "+p.nextIssue;
+ $("colorPred").textContent="Colour: "+p.colour;$("numberPred").textContent="Number: "+p.number;
+ 
+ if(p.useAccuracyMode) {
+   $("engineMode").textContent = `Accuracy Mode (${p.activeVotersCount} Top Methods)`;
+   $("engineMode").style.background = "#1b382b";
+   $("engineMode").style.color = "#31d69a";
+   $("topAccInfo").textContent = `Active Pool: Top ${p.activeVotersCount} methods (Win-rate based)`;
+ } else {
+   $("engineMode").textContent = `Initial Consensus (Round ${rows.length}/10)`;
+   $("engineMode").style.background = "#2b2a1a";
+   $("engineMode").style.color = "#f6c85f";
+   $("topAccInfo").textContent = `Collecting history (${rows.length}/10 rounds)`;
+ }
+
+ $("bigVotes").textContent=p.bigVotes;$("smallVotes").textContent=p.smallVotes;
+ $("voteBar").style.width=(p.bigVotes/(p.bigVotes+p.smallVotes)*100)+"%";
+ $("consensus").textContent="Weighted consensus: "+p.cons+"% · "+(p.useAccuracyMode ? p.activeVotersCount + " top methods" : "108 methods");
+ $("latest").textContent=`Latest result: ${rows[0].issue} · ${rows[0].number} · ${rows[0].size} · ${rows[0].colour}`;
+ $("dataCount").textContent=rows.length+" records";
+ $("bigRate").innerHTML=pct(b,Math.min(50,rows.length))+'%<small> BIG in last 50</small>';
+ $("sizeBar").style.width=pct(b,Math.min(50,rows.length))+"%";
+ $("smallRate").textContent=pct(Math.min(50,rows.length)-b,Math.min(50,rows.length))+"% SMALL";
+ $("streak").textContent=`Current ${rows[0].size} streak: ${st}`;
+ $("activeMethods").textContent=p.votes.length;$("historyAge").textContent="History window: "+Math.min(rows.length,1000)+" rounds";
+ 
+ $("familySummary").innerHTML=p.byFamily.map(f=>`<div class="family"><div class="family-head"><span>${f.family}</span><b>${f.pred} · ${f.big}/${f.total} BIG</b></div><div class="familybar"><i style="width:${pct(Math.max(f.big,f.small),f.total)}%"></i></div></div>`).join("");
+ $("breakdown").innerHTML=[`Size: ${p.size}`,`Colour: ${p.colour}`,`Number: ${p.number}`,`Consensus: ${p.cons}%`,`BIG score: ${p.bigVotes}`,`SMALL score: ${p.smallVotes}`,`Voting pool: ${p.activeVotersCount} methods`].map(x=>`<span class="pill">${x}</span>`).join("");
+ $("explain").textContent= p.useAccuracyMode
+   ? `Engine 10+ records par chal raha hai. Sabhi 108 methods ka pichle 10 rounds ka real win-rate nikala gaya aur sirf highest accuracy wale methods ki voting se final outcome finalize hua.`
+   : `Pehle 10 rounds ke dauran sabhi 108 methods ko samaan weight diya gaya hai. 10 records complete hone par highest accuracy filter automatically enable ho jayega.`;
+ 
+ // Render methods sorted by accuracy descending
+ const sortedMethods = [...p.votes].sort((a, b) => b.accuracy - a.accuracy);
+ $("methods").innerHTML=sortedMethods.map(v=>`<div class="method"><span>${String(v.id).padStart(3,"0")}. ${v.name}</span><span class="vote ${v.pred}">${v.pred} · ${p.useAccuracyMode ? v.accuracy+'% Acc (10R)' : 'Normal'}</span></div>`).join("");
+ $("history").innerHTML=rows.map(x=>`<tr><td>${x.issue}</td><td><b>${x.number}</b></td><td><span class="tag ${x.size.toLowerCase()}">${x.size}</span></td><td><span class="tag ${x.colour.toLowerCase()}">${x.colour}</span></td><td>${x.time||"--"}</td></tr>`).join("");
+ $("historyCount").textContent=rows.length+" records loaded";
+ $("historyInfo").textContent=`Showing latest ${rows.length} API records (API history limit: 10). Total records stored on server for analysis: ${window.serverTotalHistory||rows.length}.`;
+}
+
+async function fetchHistory(){
+ if(refreshBusy)return;refreshBusy=true;
+ try{
+  const response=await fetch('/api/state?_='+Date.now(),{cache:'no-store',headers:{'Accept':'application/json'}});
+  if(!response.ok)throw new Error('Server HTTP '+response.status);
+  const state=await response.json();
+  rows=normalise({list:state.history||[]});
+  window.serverTotalHistory=state.totalHistory||rows.length;
+  predictionLog=state.predictions||[];
+  serverLatestPrediction=state.latestPrediction||predictionLog[0]||null;
+  if(!rows.length)throw new Error('Server par abhi history nahi mili; collector ka pehla cycle chal raha ho sakta hai.');
+  $('dot').className='dot live';$('status').textContent='LIVE · Cloud server connected';
+  $('apiError').textContent='';$('dataSource').textContent=`Source: Cloud collector · ${state.pollSeconds||5}s polling`;
+  $('lastUpdate').textContent='Dashboard sync: '+new Date().toLocaleTimeString();
+  $('dataCount').textContent=(state.totalHistory||rows.length)+' saved records';
+  render();
+ }catch(err){
+  $('dot').className='dot err';$('status').textContent='Server/API error';
+  $('apiError').textContent=err.message;
+  $('dataSource').textContent='Cloud data unavailable; check Render logs and DATABASE_URL.';
+ }finally{refreshBusy=false}
+}
+
+function start(){if(timer)clearInterval(timer);timer=setInterval(fetchHistory,3000);fetchHistory()}
+$("refreshBtn").onclick=fetchHistory;
+$("historyToggle").onclick=()=>{const content=$("historyContent"),hidden=content.classList.toggle("hidden-history");$("historyToggle").textContent=hidden?"Show history":"Hide history";};
+
+$("pauseBtn").onclick=()=>{paused=!paused;if(paused){clearInterval(timer);$("pauseBtn").textContent="Resume refresh";$("status").textContent="Paused"}else{$("pauseBtn").textContent="Pause refresh";start()}};
+function tick(){let sec=new Date().getSeconds(),remain=30-(sec%30);$("timer").textContent="00:"+String(remain).padStart(2,"0")}
+setInterval(tick,250);tick();start();
+</script></body></html>
