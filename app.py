@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from collections import Counter
 import requests
 from flask import Flask, jsonify, send_from_directory
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 app = Flask(__name__, static_folder='static')
@@ -32,13 +32,14 @@ def init_db():
             target_issue VARCHAR(80) PRIMARY KEY, prediction VARCHAR(10) NOT NULL,
             actual VARCHAR(10), actual_number INTEGER, result VARCHAR(10) NOT NULL,
             saved_at VARCHAR(40) NOT NULL, colour VARCHAR(10), number_pick INTEGER,
-            consensus INTEGER, selected_logic VARCHAR(160)
+            consensus INTEGER, logic_name VARCHAR(200), logic_accuracy INTEGER
         )'''))
-        # Backward-compatible migration for an existing Render database.
-        try:
-            c.execute(text('ALTER TABLE predictions ADD COLUMN selected_logic VARCHAR(160)'))
-        except Exception:
-            pass
+        # Backward-compatible migration for existing SQLite/Postgres databases.
+        existing = {col['name'] for col in inspect(engine).get_columns('predictions')}
+        if 'logic_name' not in existing:
+            c.execute(text('ALTER TABLE predictions ADD COLUMN logic_name VARCHAR(200)'))
+        if 'logic_accuracy' not in existing:
+            c.execute(text('ALTER TABLE predictions ADD COLUMN logic_accuracy INTEGER'))
 
 
 def size_of(n): return 'BIG' if int(n) >= 5 else 'SMALL'
@@ -170,6 +171,7 @@ def make_prediction(data):
         'smallVotes': 1 if size == 'SMALL' else 0, 'activeMethods': 1,
         'useAccuracyMode': True, 'topAccuracy': best['accuracy'],
         'votingRule': 'single_best_logic_last_100', 'votingMethods': [best['name']],
+        'logicId': best['id'], 'logicName': best['name'], 'logicAccuracy': best['accuracy'],
         'votingMethodDetails': [{'id': best['id'], 'name': best['name'],
                                  'accuracy': best['accuracy'], 'prediction': size}]
     }
@@ -219,10 +221,10 @@ def process_cycle():
         logging.info('Collector cycle: fetched=%s latest=%s; waiting for 101 records for last-100 single-logic accuracy',len(items),items[0]['issue'])
         return
     with engine.begin() as c:
-        c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,selected_logic)
-            VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic)
-            ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,selected_logic=excluded.selected_logic WHERE predictions.result='PENDING' '''),
-            {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic':p['votingMethodDetails'][0]['name'] if p.get('votingMethodDetails') else 'Unknown'})
+        c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy)
+            VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic_name,:logic_accuracy)
+            ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,logic_name=excluded.logic_name,logic_accuracy=excluded.logic_accuracy WHERE predictions.result='PENDING' '''),
+            {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic_name':p['logicName'],'logic_accuracy':p['logicAccuracy']})
     logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s top_accuracy=%s top_methods=%s',
         len(items),items[0]['issue'],p['nextIssue'],p['size'],p['topAccuracy'],p['activeMethods'])
 
@@ -246,10 +248,10 @@ def health(): return jsonify({'ok':True,'service':'wingo-collector','poll_second
 def state():
     rows=db_rows(None)
     with engine.connect() as c:
-        preds=c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,selected_logic
+        preds=c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy
             FROM predictions ORDER BY target_issue DESC''')).mappings().all()
         total=c.execute(text('SELECT COUNT(*) FROM results')).scalar_one()
-    predictions=[{'targetIssue':r['target_issue'],'prediction':r['prediction'],'actual':r['actual'] or '--','actualNumber':r['actual_number'],'result':r['result'],'savedAt':r['saved_at'],'colour':r['colour'],'number':r['number_pick'],'consensus':r['consensus'],'logic':r['selected_logic'] or 'Legacy / Unknown','logicAccuracy':r['consensus']} for r in preds]
+    predictions=[{'targetIssue':r['target_issue'],'prediction':r['prediction'],'actual':r['actual'] or '--','actualNumber':r['actual_number'],'result':r['result'],'savedAt':r['saved_at'],'colour':r['colour'],'number':r['number_pick'],'consensus':r['consensus'],'logicName':r['logic_name'] or '--','logicAccuracy':r['logic_accuracy']} for r in preds]
     # Headline prediction comes from the server-saved next-period prediction.
     current_engine = make_prediction(rows)
     latest_prediction = predictions[0] if predictions else None
