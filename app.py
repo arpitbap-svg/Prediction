@@ -20,7 +20,6 @@ engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
 
 with open(os.path.join(os.path.dirname(__file__), 'methods.json'), encoding='utf-8') as f:
     METHODS = json.load(f)
-FAMILIES = list(dict.fromkeys(m['family'] for m in METHODS))
 
 
 def init_db():
@@ -130,43 +129,45 @@ def run_single_method(method, data):
     return majority(s)
 
 
-def calculate_accuracy(method,data):
-    correct=evaluated=0
-    for step in range(1,11):
-        if step>=len(data): break
-        if run_single_method(method,data[step:])==data[step-1]['size']: correct+=1
-        evaluated+=1
-    return round(correct/evaluated*100) if evaluated else 50
+def calculate_accuracy(method, data):
+    # Accuracy on the 100 most recent completed periods.
+    correct = evaluated = 0
+    for step in range(1, min(101, len(data))):
+        if run_single_method(method, data[step:]) == data[step - 1]['size']:
+            correct += 1
+        evaluated += 1
+    return round(correct / evaluated * 100) if evaluated else 0
 
 
 def make_prediction(data):
-    # Strict mode only: wait until at least 10 prior rounds can be backtested.
-    # Only methods tied at the exact highest accuracy are allowed to vote.
-    if len(data) < 11:
+    # 100 completed periods plus the current latest result are required.
+    if len(data) < 101:
         return None
-    votes=[]
-    for m in METHODS:
-        votes.append({**m,'pred':run_single_method(m,data),'accuracy':calculate_accuracy(m,data)})
-    max_acc=max(v['accuracy'] for v in votes)
-    top=[v for v in votes if v['accuracy']==max_acc]
-    big_votes=sum(1 for v in top if v['pred']=='BIG')
-    small_votes=sum(1 for v in top if v['pred']=='SMALL')
-    size='BIG' if big_votes>small_votes else 'SMALL' if small_votes>big_votes else majority([v['pred'] for v in top])
-    consensus=round(max(big_votes,small_votes)/(len(top) or 1)*100)
-    freq=[0]*10
-    for r in data[:100]: freq[r['number']]+=1
-    recent_colours=[r['colour'] for r in data[:20]]
-    green=sum(1 for c in recent_colours if c=='GREEN')
-    colour='GREEN' if green>=len(recent_colours)/2 else 'RED'
-    candidates=[n for n in range(10) if size_of(n)==size and colour_of(n)==colour]
-    if not candidates: candidates=[n for n in range(10) if size_of(n)==size]
-    number_pick=sorted(candidates,key=lambda n:freq[n],reverse=True)[0] if candidates else (7 if size=='BIG' else 2)
-    issue=str(data[0]['issue']); next_issue=str(int(issue)+1) if issue.isdigit() else '--'
-    return {'size':size,'colour':colour,'number':number_pick,'nextIssue':next_issue,'consensus':consensus,
-        'bigVotes':big_votes,'smallVotes':small_votes,'activeMethods':len(top),'useAccuracyMode':True,
-        'topAccuracy':max_acc,'votingRule':'exact_top_accuracy_only',
-        'votingMethods':[v['name'] for v in top],
-        'votingMethodDetails':[{'id':v['id'],'name':v['name'],'accuracy':v['accuracy'],'prediction':v['pred']} for v in top]}
+    ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in METHODS]
+    # Exactly one individual logic is selected; no family voting or tie aggregation.
+    best = max(ranked, key=lambda item: (item['accuracy'], -item['id']))
+    size = run_single_method(best, data)
+    freq = [0] * 10
+    for row in data[:100]:
+        freq[row['number']] += 1
+    recent_colours = [row['colour'] for row in data[:20]]
+    green = sum(1 for colour in recent_colours if colour == 'GREEN')
+    colour = 'GREEN' if green >= len(recent_colours) / 2 else 'RED'
+    candidates = [n for n in range(10) if size_of(n) == size and colour_of(n) == colour]
+    if not candidates:
+        candidates = [n for n in range(10) if size_of(n) == size]
+    number_pick = sorted(candidates, key=lambda n: freq[n], reverse=True)[0] if candidates else (7 if size == 'BIG' else 2)
+    issue = str(data[0]['issue'])
+    next_issue = str(int(issue) + 1) if issue.isdigit() else '--'
+    return {
+        'size': size, 'colour': colour, 'number': number_pick, 'nextIssue': next_issue,
+        'consensus': best['accuracy'], 'bigVotes': 1 if size == 'BIG' else 0,
+        'smallVotes': 1 if size == 'SMALL' else 0, 'activeMethods': 1,
+        'useAccuracyMode': True, 'topAccuracy': best['accuracy'],
+        'votingRule': 'single_best_logic_last_100', 'votingMethods': [best['name']],
+        'votingMethodDetails': [{'id': best['id'], 'name': best['name'],
+                                 'accuracy': best['accuracy'], 'prediction': size}]
+    }
 
 
 def db_rows(limit=1500):
@@ -210,7 +211,7 @@ def process_cycle():
                     {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
     p=make_prediction(rows)
     if not p or p['nextIssue']=='--':
-        logging.info('Collector cycle: fetched=%s latest=%s; waiting for 11 records for strict top-accuracy voting',len(items),items[0]['issue'])
+        logging.info('Collector cycle: fetched=%s latest=%s; waiting for 101 records for last-100 single-logic accuracy',len(items),items[0]['issue'])
         return
     with engine.begin() as c:
         c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus)
