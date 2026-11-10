@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text, inspect
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 app = Flask(__name__, static_folder='static')
 API_BASE = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json?pageSize=10&pageNo={page}'
-POLL_SECONDS = max(5, int(os.getenv('POLL_SECONDS', '5')))
+POLL_SECONDS = max(3, int(os.getenv('POLL_SECONDS', '3')))
 DB_URL = os.getenv('DATABASE_URL', '').strip()
 if DB_URL.startswith('postgres://'):
     DB_URL = DB_URL.replace('postgres://', 'postgresql+psycopg2://', 1)
@@ -151,7 +151,7 @@ def make_prediction(data):
         return None
     ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in METHODS]
     # Exactly one individual logic is selected; no family voting or tie aggregation.
-    best = max(ranked, key=lambda item: (item['accuracy'], -item['id']))
+    best = min(ranked, key=lambda item: (item['accuracy'], item['id']))
     size = run_single_method(best, data)
     freq = [0] * 10
     for row in data[:100]:
@@ -170,7 +170,7 @@ def make_prediction(data):
         'consensus': best['accuracy'], 'bigVotes': 1 if size == 'BIG' else 0,
         'smallVotes': 1 if size == 'SMALL' else 0, 'activeMethods': 1,
         'useAccuracyMode': True, 'topAccuracy': best['accuracy'],
-        'votingRule': 'single_best_logic_last_100', 'votingMethods': [best['name']],
+        'votingRule': 'single_lowest_accuracy_logic_last_100', 'votingMethods': [best['name']],
         'logicId': best['id'], 'logicName': best['name'], 'logicAccuracy': best['accuracy'],
         'votingMethodDetails': [{'id': best['id'], 'name': best['name'],
                                  'accuracy': best['accuracy'], 'prediction': size}]
@@ -180,10 +180,12 @@ def make_prediction(data):
 def db_rows(limit=1500):
     with engine.connect() as c:
         if limit is None:
-            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results ORDER BY issue DESC')).mappings().all()
+            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results')).mappings().all()
         else:
-            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results ORDER BY issue DESC LIMIT :lim'),{'lim':limit}).mappings().all()
-    return [{'issue':r['issue'],'number':r['number'],'size':r['size'],'colour':r['colour'],'time':r['draw_time'] or ''} for r in rows]
+            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results'),{'lim':limit}).mappings().all()
+    out=[{'issue':r['issue'],'number':r['number'],'size':r['size'],'colour':r['colour'],'time':r['draw_time'] or ''} for r in rows]
+    out.sort(key=lambda r: int(r['issue']) if str(r['issue']).isdigit() else str(r['issue']), reverse=True)
+    return out if limit is None else out[:limit]
 
 
 def persist_batch(items):
@@ -225,12 +227,12 @@ def process_cycle():
             VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic_name,:logic_accuracy)
             ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,logic_name=excluded.logic_name,logic_accuracy=excluded.logic_accuracy WHERE predictions.result='PENDING' '''),
             {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic_name':p['logicName'],'logic_accuracy':p['logicAccuracy']})
-    logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s top_accuracy=%s top_methods=%s',
+    logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s lowest_accuracy=%s selected_logic=%s',
         len(items),items[0]['issue'],p['nextIssue'],p['size'],p['topAccuracy'],p['activeMethods'])
 
 
 def collector_loop():
-    # One initial cycle, then every 5 seconds by default. A platform restart resets this timer.
+    # One initial cycle, then every 3 seconds by default. A platform restart resets this timer.
     while True:
         started=time.time()
         try: process_cycle()
@@ -252,6 +254,7 @@ def state():
             FROM predictions ORDER BY target_issue DESC''')).mappings().all()
         total=c.execute(text('SELECT COUNT(*) FROM results')).scalar_one()
     predictions=[{'targetIssue':r['target_issue'],'prediction':r['prediction'],'actual':r['actual'] or '--','actualNumber':r['actual_number'],'result':r['result'],'savedAt':r['saved_at'],'colour':r['colour'],'number':r['number_pick'],'consensus':r['consensus'],'logicName':r['logic_name'] or '--','logicAccuracy':r['logic_accuracy']} for r in preds]
+    predictions.sort(key=lambda p: int(p['targetIssue']) if str(p['targetIssue']).isdigit() else str(p['targetIssue']), reverse=True)
     # Headline prediction comes from the server-saved next-period prediction.
     current_engine = make_prediction(rows)
     latest_prediction = predictions[0] if predictions else None
