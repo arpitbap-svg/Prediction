@@ -285,7 +285,7 @@ async function fetchHistory(){
   window.serverEngine=state.engine||null;
   if(!rows.length)throw new Error('Server par abhi history nahi mili; collector ka pehla cycle chal raha ho sakta hai.');
   $('dot').className='dot live';$('status').textContent='LIVE · Cloud server connected';
-  $('apiError').textContent='';$('dataSource').textContent=`Source: Cloud collector · ${state.pollSeconds||5}s polling`;
+  $('apiError').textContent='';$('dataSource').textContent=`Source: Cloud collector · ${state.pollSeconds||3}s polling`;
   $('lastUpdate').textContent='Dashboard sync: '+new Date().toLocaleTimeString();
   $('dataCount').textContent=(state.totalHistory||rows.length)+' saved records';
   render();
