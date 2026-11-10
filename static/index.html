@@ -32,25 +32,25 @@ button{border:1px solid #34506e;background:#152741;color:#e9f4ff;border-radius:9
 @media(max-width:760px){.hero{grid-template-columns:1fr 1fr}.hero .hero-main{grid-column:span 2}.twocol,.third{grid-column:span 12}.methodgrid{grid-template-columns:1fr}.wrap{padding:12px}}
 </style></head>
 <body><div class="wrap">
-<header class="top"><div><h1>⚡ WinGo 30S · 108 Logic Predictor</h1><div class="sub">Single Best Logic · Last 100 Period Accuracy</div></div>
+<header class="top"><div><h1>⚡ WinGo 30S · 108 Logic Predictor</h1><div class="sub">Single Lowest-Accuracy Logic · Last 100 Periods</div></div>
 <div class="status"><span id="dot" class="dot"></span><span id="status">Connecting to API…</span></div></header>
 <div class="grid">
 <section class="card hero">
  <div class="hero-main"><div class="kicker">Next round · Size prediction</div><div id="prediction" class="bigpred">--</div><div class="meta" id="nextIssue">Next Period: waiting…</div><div class="pills" style="margin-top:10px"><span class="pill" id="colorPred">Colour: --</span><span class="pill" id="numberPred">Number: --</span><span class="pill" id="engineMode" style="background:#1b382b;color:#31d69a;border-color:#31d69a">Mode: Initial</span></div></div>
  <div><div class="kicker">Selected Logic Accuracy</div><div class="metric"><span id="bigVotes">0</span> <small>BIG</small> / <span id="smallVotes">0</span> <small>SMALL</small></div><div class="bar"><i id="voteBar"></i></div><div class="meta" id="consensus">Selected logic accuracy: --</div></div>
- <div><div class="kicker">Round timer</div><div class="metric" id="timer">--:--</div><div class="meta">Cloud collector: every 30 seconds</div><div class="meta" id="lastUpdate">Last update: --</div></div>
+ <div><div class="kicker">Round timer</div><div class="metric" id="timer">--:--</div><div class="meta">Cloud collector: every 3 seconds</div><div class="meta" id="lastUpdate">Last update: --</div></div>
 </section>
 <section class="card third"><div class="section-title">API & History <span class="tag" id="dataCount">0 records</span></div><div class="meta" id="latest">Latest result: --</div><div class="meta" id="apiError" style="color:var(--red);margin-top:7px"></div><div class="controls" style="margin-top:12px"><button id="refreshBtn">Refresh now</button><button id="pauseBtn">Pause refresh</button></div><div class="note" style="margin-top:9px">API: draw.ar-lottery01.com / WinGo_30S</div></section>
 <section class="card third"><div class="section-title">Size statistics</div><div class="metric" id="bigRate">--<small> BIG in last 50</small></div><div class="bar"><i id="sizeBar"></i></div><div class="meta" id="smallRate">-- SMALL</div><div class="meta" id="streak">Current streak: --</div></section>
 <section class="card third"><div class="section-title">Engine health</div><div class="metric"><span id="activeMethods">108</span><small> / 108 methods</small></div><div class="meta" id="topAccInfo">Backtesting: Waiting for 10 records</div><div class="meta" id="dataSource">Waiting for live data</div><div class="meta" id="historyAge">History window: --</div></section>
 <section class="card full"><div class="section-title">Maximum WIN / LOSS Streaks</div><div class="statgrid"><div class="statbox"><span class="meta">All-time maximum WIN</span><b class="result-win" id="maxWinAll">0</b><span class="meta">consecutive predictions</span></div><div class="statbox"><span class="meta">All-time maximum LOSS</span><b class="result-loss" id="maxLossAll">0</b><span class="meta">consecutive predictions</span></div><div class="statbox"><span class="meta">Last 100 periods · max WIN</span><b class="result-win" id="maxWin100">0</b><span class="meta">consecutive predictions</span></div><div class="statbox"><span class="meta">Last 100 periods · max LOSS</span><b class="result-loss" id="maxLoss100">0</b><span class="meta">consecutive predictions</span></div></div><p class="note" id="streakBasis" style="margin:9px 0 0">Streaks are calculated from settled prediction results only; pending records are excluded.</p></section>
-<section class="card twocol"><div class="section-title">Family voting removed</div><div class="meta">Family voting is disabled. Only the single highest-accuracy logic from the last 100 periods makes the prediction.</div></section>
+<section class="card twocol"><div class="section-title">Family voting removed</div><div class="meta">Family voting is disabled. Only the single lowest-accuracy logic from the last 100 periods makes the prediction.</div></section>
 <section class="card twocol"><div class="section-title">Prediction breakdown</div><div class="pills" id="breakdown"></div><p class="note" id="explain" style="margin-top:10px">Waiting for enough historical data.</p></section>
-<section class="card full"><div class="section-title">Best Logic · Backtested Accuracy (Last 100 Periods) <span class="tag">Ranked by Win-rate</span></div><div id="methods" class="methodgrid"></div></section>
-<section class="card full"><div class="section-title">Prediction History · Win / Loss <span class="tag" id="predictionStats">0 settled</span></div><div class="meta" id="predictionSummary">Prediction result will be checked when the target period appears in API history.</div><div class="scroll" style="margin-top:10px"><table><thead><tr><th>Target Period</th><th>Prediction</th><th>Actual</th><th>Result · Logic used · Accuracy</th><th>Saved at</th></tr></thead><tbody id="predictionHistory"></tbody></table></div><div class="controls" style="margin-top:10px"><span class="note">Prediction history is saved on the server.</span><button id="clearPredictionHistory" type="button" style="margin-left:auto;background:#5a2028;color:#fff;border:1px solid #9c3c48;border-radius:8px;padding:8px 12px">Clear Prediction History</button></div></section>
+<section class="card full"><div class="section-title">Selected Logic · Backtested Accuracy (Last 100 Periods) <span class="tag">Lowest accuracy selected</span></div><div id="methods" class="methodgrid"></div></section>
+<section class="card full"><div class="section-title">Prediction History · Win / Loss <span class="tag" id="predictionStats">0 settled</span></div><div class="meta" id="predictionSummary">Prediction result will be checked when the target period appears in API history.</div><div class="scroll" style="margin-top:10px"><table><thead><tr><th>Target Period</th><th>Prediction</th><th>Actual</th><th>Result · Logic used · Accuracy</th><th>Saved at</th></tr></thead><tbody id="predictionHistory"></tbody></table></div><div class="controls" style="margin-top:10px"><span class="note">Prediction history is saved on the server. JSON API: <a href="/api/prediction" target="_blank" rel="noopener">/api/prediction</a></span><button id="downloadCsv" type="button" style="background:#164d3b;color:#fff;border:1px solid #2c8b67;border-radius:8px;padding:8px 12px">Download CSV</button><button id="clearPredictionHistory" type="button" style="margin-left:auto;background:#5a2028;color:#fff;border:1px solid #9c3c48;border-radius:8px;padding:8px 12px">Clear Prediction History</button></div></section>
 <section class="card history-panel"><div class="section-title">API History · Latest 10 <span><span class="tag" id="historyCount">0 records</span> <button id="historyToggle" type="button">Hide history</button></span></div><div id="historyContent"><div class="meta" id="historyInfo">Only the latest 10 actual records returned by the API, newest first.</div><div class="scroll" style="margin-top:9px"><table><thead><tr><th>Period / Issue</th><th>Number</th><th>Size</th><th>Colour</th><th>Time</th></tr></thead><tbody id="history"></tbody></table></div></div></section>
 </div>
-<div class="foot">Cloud collector rule: Python server API ko har 10 second mein check karta hai aur prediction/history database mein save karta hai. Dashboard khula hona zaroori nahi. Prediction logic: 100 completed periods are backtested. Only the single highest-accuracy individual logic predicts; family voting is disabled.</div>
+<div class="foot">Cloud collector rule: Python server API ko har 3 second mein check karta hai aur prediction/history database mein save karta hai. Dashboard khula hona zaroori nahi. Prediction logic: 100 completed periods are backtested. Only the single lowest-accuracy individual logic predicts; family voting is disabled.</div>
 </div>
 <script>
 const API="https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json?pageSize=200&pageNo=1";
@@ -237,10 +237,10 @@ function render(){
  $("colorPred").textContent="Colour: "+p.colour;$("numberPred").textContent="Number: "+p.number;
  
  if(p.useAccuracyMode) {
-   $("engineMode").textContent = `Accuracy Mode (${p.activeVotersCount} Top Methods)`;
+   $("engineMode").textContent = `Accuracy Mode (${p.activeVotersCount} Selected Logic)`;
    $("engineMode").style.background = "#1b382b";
    $("engineMode").style.color = "#31d69a";
-   $("topAccInfo").textContent = `Active Pool: Best logic only · ${engine?.topAccuracy ?? 0}% (last 100)`;
+   $("topAccInfo").textContent = `Active Pool: Selected logic only · ${engine?.topAccuracy ?? 0}% (last 100)`;
  } else {
    $("engineMode").textContent = `Waiting for 100-period accuracy (${rows.length}/101 records)`;
    $("engineMode").style.background = "#2b2a1a";
@@ -250,7 +250,7 @@ function render(){
 
  $("bigVotes").textContent=p.bigVotes;$("smallVotes").textContent=p.smallVotes;
  $("voteBar").style.width=(p.bigVotes/(p.bigVotes+p.smallVotes)*100)+"%";
- $("consensus").textContent=p.useAccuracyMode ? ("Best single logic accuracy: "+p.cons+"% (last 100 periods)") : "Waiting for 100-period single-logic selection";
+ $("consensus").textContent=p.useAccuracyMode ? ("Selected logic accuracy: "+p.cons+"% (last 100 periods)") : "Waiting for 100-period single-logic selection";
  $("latest").textContent=`Latest result: ${rows[0].issue} · ${rows[0].number} · ${rows[0].size} · ${rows[0].colour}`;
  $("dataCount").textContent=rows.length+" records";
  $("bigRate").innerHTML=pct(b,Math.min(50,rows.length))+'%<small> BIG in last 50</small>';
@@ -259,14 +259,14 @@ function render(){
  $("streak").textContent=`Current ${rows[0].size} streak: ${st}`;
  $("activeMethods").textContent=p.activeVotersCount||0;$("historyAge").textContent="History window: "+Math.min(rows.length,1000)+" rounds";
  
- $("breakdown").innerHTML=[`Size: ${p.size}`,`Colour: ${p.colour}`,`Number: ${p.number}`,`Best logic accuracy: ${p.cons}%`,`Active logic: ${p.activeVotersCount}`].map(x=>`<span class="pill">${x}</span>`).join("");
+ $("breakdown").innerHTML=[`Size: ${p.size}`,`Colour: ${p.colour}`,`Number: ${p.number}`,`Selected logic accuracy: ${p.cons}%`,`Active logic: ${p.activeVotersCount}`].map(x=>`<span class="pill">${x}</span>`).join("");
  $("explain").textContent= p.useAccuracyMode
-   ? `Last 100 completed periods par sabhi individual logics ki accuracy compare hui. Sirf sabse zyada accuracy wala ek logic prediction deta hai; family voting band hai.`
-   : `100 completed periods ka backtest data aane tak prediction nahi banega. Uske baad sirf ek highest-accuracy logic prediction dega.`;
+   ? `Last 100 completed periods par sabhi individual logics ki accuracy compare hui. Sirf sabse kam accuracy wala ek logic prediction deta hai; family voting band hai.`
+   : `100 completed periods ka backtest data aane tak prediction nahi banega. Uske baad sirf ek lowest-accuracy logic prediction dega.`;
  
- // Show only exact top-accuracy ties as active voters; never show lower scores as voters.
+ // Display the one selected lowest-accuracy logic only; no voting or tie aggregation.
  const topDetails=engine?.votingMethodDetails||[];
- $("methods").innerHTML=topDetails.length ? topDetails.map(v=>`<div class="method"><span>${String(v.id).padStart(3,"0")}. ${v.name}</span><span class="vote ${v.prediction}">${v.prediction} · ${v.accuracy}% (Best logic)</span></div>`).join("") : '<div class="meta">100 completed periods hone tak prediction logic select nahi hoga.</div>';
+ $("methods").innerHTML=topDetails.length ? topDetails.map(v=>`<div class="method"><span>${String(v.id).padStart(3,"0")}. ${v.name}</span><span class="vote ${v.prediction}">${v.prediction} · ${v.accuracy}% (Selected logic)</span></div>`).join("") : '<div class="meta">100 completed periods hone tak prediction logic select nahi hoga.</div>';
  $("history").innerHTML=rows.map(x=>`<tr><td>${x.issue}</td><td><b>${x.number}</b></td><td><span class="tag ${x.size.toLowerCase()}">${x.size}</span></td><td><span class="tag ${x.colour.toLowerCase()}">${x.colour}</span></td><td>${x.time||"--"}</td></tr>`).join("");
  $("historyCount").textContent=rows.length+" records loaded";
  $("historyInfo").textContent=`Showing latest ${rows.length} API records (API history limit: 10). Total records stored on server for analysis: ${window.serverTotalHistory||rows.length}.`;
@@ -299,6 +299,7 @@ async function fetchHistory(){
 function start(){if(timer)clearInterval(timer);timer=setInterval(fetchHistory,3000);fetchHistory()}
 $("refreshBtn").onclick=fetchHistory;
 $("historyToggle").onclick=()=>{const content=$("historyContent"),hidden=content.classList.toggle("hidden-history");$("historyToggle").textContent=hidden?"Show history":"Hide history";};
+$("downloadCsv").onclick=()=>{window.location.href="/api/predictions.csv";};
 $("clearPredictionHistory").onclick=async()=>{if(!confirm("Kya aap poori Prediction History clear karna chahte hain? API History delete nahi hogi."))return;try{const r=await fetch('/api/predictions/clear',{method:'POST'});if(!r.ok)throw new Error('HTTP '+r.status);await fetchHistory();alert('Prediction History clear ho gayi. API History safe hai.');}catch(e){alert('History clear nahi hui: '+e.message);}};
 
 $("pauseBtn").onclick=()=>{paused=!paused;if(paused){clearInterval(timer);$("pauseBtn").textContent="Resume refresh";$("status").textContent="Paused"}else{$("pauseBtn").textContent="Pause refresh";start()}};
