@@ -1,8 +1,8 @@
-import os, json, time, threading, logging
+import os, json, time, threading, logging, csv, io
 from datetime import datetime, timezone
 from collections import Counter
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, Response
 from sqlalchemy import create_engine, text, inspect
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -266,6 +266,54 @@ def state():
     wins=sum(1 for p in settled if p['result']=='WIN')
     latest=rows[0] if rows else None
     return jsonify({'history':api_history,'predictions':predictions,'latestPrediction':latest_prediction,'totalHistory':total,'latest':latest,'stats':{'settled':len(settled),'wins':wins,'losses':len(settled)-wins,'accuracy':round(wins/len(settled)*100) if settled else 0},'serverTime':datetime.now(timezone.utc).isoformat(),'pollSeconds':POLL_SECONDS,'engine':current_engine})
+
+
+@app.get('/api/prediction')
+def prediction_json():
+    """Public JSON endpoint: current pending prediction plus previous settled result."""
+    with engine.connect() as c:
+        rows = c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy FROM predictions ORDER BY target_issue DESC''')).mappings().all()
+    records = [dict(r) for r in rows]
+    records.sort(key=lambda r: int(r['target_issue']) if str(r['target_issue']).isdigit() else str(r['target_issue']), reverse=True)
+
+    def public_record(r):
+        if not r: return None
+        return {
+            'periodNumber': r['target_issue'],
+            'prediction': r['prediction'],
+            'status': r['result'],
+            'actualResult': r['actual'] or None,
+            'actualNumber': r['actual_number'],
+            'colourPrediction': r['colour'],
+            'numberPrediction': r['number_pick'],
+            'logicName': r['logic_name'] or '--',
+            'logicAccuracy': r['logic_accuracy'],
+            'createdAt': r['saved_at']
+        }
+
+    current = next((r for r in records if r['result'] == 'PENDING'), None)
+    previous = next((r for r in records if r['result'] in ('WIN', 'LOSS')), None)
+    return jsonify({
+        'ok': True,
+        'game': 'WinGo_30S',
+        'currentPrediction': public_record(current),
+        'previousPrediction': public_record(previous),
+        'updatedAt': datetime.now(timezone.utc).isoformat()
+    })
+
+
+@app.get('/api/predictions.csv')
+def predictions_csv():
+    """Download the complete saved prediction history as UTF-8 CSV."""
+    with engine.connect() as c:
+        rows = c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,colour,number_pick,logic_name,logic_accuracy,saved_at FROM predictions ORDER BY target_issue DESC''')).mappings().all()
+    output = io.StringIO(newline='')
+    writer = csv.writer(output)
+    writer.writerow(['Period Number', 'Prediction', 'Actual Result', 'Actual Number', 'WIN/LOSS Status', 'Colour Prediction', 'Number Prediction', 'Logic Used', 'Logic Accuracy (%)', 'Prediction Time'])
+    for r in rows:
+        writer.writerow([r['target_issue'], r['prediction'], r['actual'] or '', r['actual_number'] if r['actual_number'] is not None else '', r['result'], r['colour'] or '', r['number_pick'] if r['number_pick'] is not None else '', r['logic_name'] or '', r['logic_accuracy'] if r['logic_accuracy'] is not None else '', r['saved_at']])
+    data = '\ufeff' + output.getvalue()
+    return Response(data, mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename=wingo_prediction_history.csv', 'Cache-Control': 'no-store'})
 
 
 @app.post('/api/predictions/clear')
