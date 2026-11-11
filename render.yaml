@@ -10,6 +10,6 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: POLL_SECONDS
-        value: "5"
+        value: "3"
       - key: DATABASE_URL
         sync: false

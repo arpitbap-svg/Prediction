@@ -54,3 +54,13 @@ NEW API & CSV FEATURES
 - CSV download endpoint: https://YOUR-SERVICE.onrender.com/api/predictions.csv
   Downloads the complete saved Prediction History as wingo_prediction_history.csv.
 - Website Prediction History section also has a Download CSV button and a direct JSON API link.
+
+LOGIC MANAGER UPDATE (Nov 2026)
+-------------------------------
+- Website ke bottom mein Dashboard aur Logic Manager tabs diye gaye hain.
+- Logic Manager mein 108 methods ko name ya ID se search karke individual ON/OFF kar sakte hain.
+- OFF methods ki accuracy backtest aur prediction calculation dono se exclude hoti hai.
+- All ON / All OFF controls bhi available hain.
+- Settings logic_settings database table mein save hoti hain; redeploy ke baad bhi settings rahengi, jab tak wahi persistent DATABASE_URL use ho.
+- Agar saare logics OFF honge to nayi prediction nahi banegi. Pehle se issue hui prediction history delete nahi hoti.
+- API endpoints: GET /api/logics, POST /api/logics/toggle, POST /api/logics/bulk.

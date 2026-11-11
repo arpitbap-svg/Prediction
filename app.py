@@ -2,7 +2,7 @@ import os, json, time, threading, logging, csv, io
 from datetime import datetime, timezone
 from collections import Counter
 import requests
-from flask import Flask, jsonify, send_from_directory, Response
+from flask import Flask, jsonify, send_from_directory, Response, request
 from sqlalchemy import create_engine, text, inspect
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -27,6 +27,9 @@ def init_db():
         c.execute(text('''CREATE TABLE IF NOT EXISTS results (
             issue VARCHAR(80) PRIMARY KEY, number INTEGER NOT NULL, size VARCHAR(10) NOT NULL,
             colour VARCHAR(10) NOT NULL, draw_time VARCHAR(80), saved_at VARCHAR(40) NOT NULL
+        )'''))
+        c.execute(text('''CREATE TABLE IF NOT EXISTS logic_settings (
+            logic_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL
         )'''))
         c.execute(text('''CREATE TABLE IF NOT EXISTS predictions (
             target_issue VARCHAR(80) PRIMARY KEY, prediction VARCHAR(10) NOT NULL,
@@ -145,11 +148,20 @@ def calculate_accuracy(method, data):
     return round(correct / evaluated * 100) if evaluated else 0
 
 
+def get_enabled_methods():
+    with engine.connect() as c:
+        disabled = {int(r['logic_id']) for r in c.execute(text('SELECT logic_id FROM logic_settings WHERE enabled=0')).mappings().all()}
+    return [m for m in METHODS if int(m['id']) not in disabled]
+
+
 def make_prediction(data):
     # 100 completed periods plus the current latest result are required.
     if len(data) < 101:
         return None
-    ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in METHODS]
+    active_methods = get_enabled_methods()
+    if not active_methods:
+        return None
+    ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in active_methods]
     # Exactly one individual logic is selected; no family voting or tie aggregation.
     best = min(ranked, key=lambda item: (item['accuracy'], item['id']))
     size = run_single_method(best, data)
@@ -220,7 +232,8 @@ def process_cycle():
                     {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
     p=make_prediction(rows)
     if not p or p['nextIssue']=='--':
-        logging.info('Collector cycle: fetched=%s latest=%s; waiting for 101 records for last-100 single-logic accuracy',len(items),items[0]['issue'])
+        reason = 'all logics disabled' if not get_enabled_methods() else 'waiting for 101 records'
+        logging.info('Collector cycle: fetched=%s latest=%s; %s',len(items),items[0]['issue'],reason)
         return
     with engine.begin() as c:
         c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy)
@@ -242,6 +255,39 @@ def collector_loop():
 
 @app.get('/')
 def home(): return send_from_directory('static','index.html')
+
+@app.get('/api/logics')
+def get_logics():
+    enabled_ids = {int(m['id']) for m in get_enabled_methods()}
+    return jsonify({'logics': [{'id': int(m['id']), 'name': m['name'], 'family': m['family'], 'enabled': int(m['id']) in enabled_ids} for m in METHODS], 'enabledCount': len(enabled_ids), 'totalCount': len(METHODS)})
+
+
+@app.post('/api/logics/toggle')
+def toggle_logic():
+    payload = request.get_json(silent=True) or {}
+    try:
+        logic_id = int(payload.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Valid logic ID is required'}), 400
+    if logic_id not in {int(m['id']) for m in METHODS}:
+        return jsonify({'ok': False, 'error': 'Unknown logic ID'}), 404
+    enabled = bool(payload.get('enabled'))
+    with engine.begin() as c:
+        c.execute(text('INSERT INTO logic_settings(logic_id,enabled) VALUES(:id,:enabled) ON CONFLICT(logic_id) DO UPDATE SET enabled=excluded.enabled'), {'id': logic_id, 'enabled': 1 if enabled else 0})
+    return jsonify({'ok': True, 'id': logic_id, 'enabled': enabled, 'enabledCount': len(get_enabled_methods())})
+
+
+@app.post('/api/logics/bulk')
+def bulk_toggle_logics():
+    payload = request.get_json(silent=True) or {}
+    enabled = bool(payload.get('enabled'))
+    with engine.begin() as c:
+        if enabled:
+            c.execute(text('DELETE FROM logic_settings'))
+        else:
+            c.execute(text('INSERT INTO logic_settings(logic_id,enabled) VALUES(:id,0) ON CONFLICT(logic_id) DO UPDATE SET enabled=0'), [{'id': int(m['id'])} for m in METHODS])
+    return jsonify({'ok': True, 'enabled': enabled, 'enabledCount': len(get_enabled_methods())})
+
 
 @app.get('/health')
 def health(): return jsonify({'ok':True,'service':'wingo-collector','poll_seconds':POLL_SECONDS})
@@ -291,7 +337,8 @@ def prediction_json():
             'createdAt': r['saved_at']
         }
 
-    current = next((r for r in records if r['result'] == 'PENDING'), None)
+    current_engine = make_prediction(db_rows(None))
+    current = next((r for r in records if r['result'] == 'PENDING' and current_engine and r['target_issue'] == current_engine['nextIssue']), None)
     previous = next((r for r in records if r['result'] in ('WIN', 'LOSS')), None)
     return jsonify({
         'ok': True,
