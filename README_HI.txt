@@ -64,3 +64,10 @@ LOGIC MANAGER UPDATE (Nov 2026)
 - Settings logic_settings database table mein save hoti hain; redeploy ke baad bhi settings rahengi, jab tak wahi persistent DATABASE_URL use ho.
 - Agar saare logics OFF honge to nayi prediction nahi banegi. Pehle se issue hui prediction history delete nahi hoti.
 - API endpoints: GET /api/logics, POST /api/logics/toggle, POST /api/logics/bulk.
+
+
+Performance/API update:
+- /api/prediction now reads the latest saved pending prediction directly from the database; it does not recalculate all logics for every API request.
+- Dashboard state also reuses the collector's saved prediction.
+- Public API responses include CORS and no-cache headers.
+- Upstream WinGo request uses a shorter connect/read timeout so a stalled source does not block a collector cycle for 20 seconds.

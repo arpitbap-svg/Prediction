@@ -213,7 +213,7 @@ def persist_batch(items):
 
 def process_cycle():
     headers={'Accept':'application/json','User-Agent':'Mozilla/5.0 (compatible; WinGoHistoryCollector/1.0)'}
-    response=requests.get(API_BASE.format(page=1),timeout=20,headers=headers)
+    response=requests.get(API_BASE.format(page=1),timeout=(4, 8),headers=headers)
     response.raise_for_status()
     items=normalise_api(response.json())
     if not items: raise RuntimeError('API response did not contain result rows')
@@ -251,6 +251,16 @@ def collector_loop():
         try: process_cycle()
         except Exception as exc: logging.exception('Collector error: %s',exc)
         time.sleep(max(1, POLL_SECONDS-(time.time()-started)))
+
+
+@app.after_request
+def add_api_headers(response):
+    if request.path.startswith('/api/'):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
 
 
 @app.get('/')
@@ -301,11 +311,31 @@ def state():
         total=c.execute(text('SELECT COUNT(*) FROM results')).scalar_one()
     predictions=[{'targetIssue':r['target_issue'],'prediction':r['prediction'],'actual':r['actual'] or '--','actualNumber':r['actual_number'],'result':r['result'],'savedAt':r['saved_at'],'colour':r['colour'],'number':r['number_pick'],'consensus':r['consensus'],'logicName':r['logic_name'] or '--','logicAccuracy':r['logic_accuracy']} for r in preds]
     predictions.sort(key=lambda p: int(p['targetIssue']) if str(p['targetIssue']).isdigit() else str(p['targetIssue']), reverse=True)
-    # Headline prediction comes from the server-saved next-period prediction.
-    current_engine = make_prediction(rows)
-    latest_prediction = predictions[0] if predictions else None
-    if not current_engine or not latest_prediction or latest_prediction['targetIssue'] != current_engine['nextIssue']:
-        latest_prediction = None
+    # Serve the prediction already calculated by the background collector.
+    # Do not rerun all 108 logic evaluations on every dashboard refresh.
+    latest_prediction = next((p for p in predictions if p['result'] == 'PENDING'), None)
+    current_engine = None
+    if latest_prediction:
+        current_engine = {
+            'size': latest_prediction['prediction'],
+            'colour': latest_prediction['colour'],
+            'number': latest_prediction['number'],
+            'nextIssue': latest_prediction['targetIssue'],
+            'consensus': latest_prediction['consensus'] or 0,
+            'bigVotes': 1 if latest_prediction['prediction'] == 'BIG' else 0,
+            'smallVotes': 1 if latest_prediction['prediction'] == 'SMALL' else 0,
+            'activeMethods': 1, 'useAccuracyMode': True,
+            'topAccuracy': latest_prediction['logicAccuracy'] or 0,
+            'votingRule': 'single_lowest_accuracy_logic_last_100',
+            'votingMethods': [latest_prediction['logicName']],
+            'logicName': latest_prediction['logicName'],
+            'logicAccuracy': latest_prediction['logicAccuracy'],
+            'votingMethodDetails': [{
+                'name': latest_prediction['logicName'],
+                'accuracy': latest_prediction['logicAccuracy'] or 0,
+                'prediction': latest_prediction['prediction']
+            }]
+        }
     # API History must show only the latest 10 actual records returned by the API.
     api_history = rows[:10]
     settled=[p for p in predictions if p['result'] in ('WIN','LOSS')]
@@ -316,11 +346,12 @@ def state():
 
 @app.get('/api/prediction')
 def prediction_json():
-    """Public JSON endpoint: current pending prediction plus previous settled result."""
+    """Fast public JSON endpoint; serves the collector's saved prediction."""
     with engine.connect() as c:
-        rows = c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy FROM predictions ORDER BY target_issue DESC''')).mappings().all()
-    records = [dict(r) for r in rows]
-    records.sort(key=lambda r: int(r['target_issue']) if str(r['target_issue']).isdigit() else str(r['target_issue']), reverse=True)
+        current = c.execute(text("""SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy
+            FROM predictions WHERE result='PENDING' ORDER BY target_issue DESC LIMIT 1""")).mappings().first()
+        previous = c.execute(text("""SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy
+            FROM predictions WHERE result IN ('WIN','LOSS') ORDER BY target_issue DESC LIMIT 1""")).mappings().first()
 
     def public_record(r):
         if not r: return None
@@ -337,16 +368,18 @@ def prediction_json():
             'createdAt': r['saved_at']
         }
 
-    current_engine = make_prediction(db_rows(None))
-    current = next((r for r in records if r['result'] == 'PENDING' and current_engine and r['target_issue'] == current_engine['nextIssue']), None)
-    previous = next((r for r in records if r['result'] in ('WIN', 'LOSS')), None)
-    return jsonify({
+    response = jsonify({
         'ok': True,
         'game': 'WinGo_30S',
         'currentPrediction': public_record(current),
         'previousPrediction': public_record(previous),
         'updatedAt': datetime.now(timezone.utc).isoformat()
     })
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+    return response
 
 
 @app.get('/api/predictions.csv')
