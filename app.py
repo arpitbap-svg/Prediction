@@ -31,6 +31,12 @@ def init_db():
         c.execute(text('''CREATE TABLE IF NOT EXISTS logic_settings (
             logic_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL
         )'''))
+        c.execute(text('''CREATE TABLE IF NOT EXISTS active_logic_state (
+            slot INTEGER PRIMARY KEY, logic_id INTEGER NOT NULL, start_result VARCHAR(10)
+        )'''))
+        state_cols = {col['name'] for col in inspect(engine).get_columns('active_logic_state')}
+        if 'start_result' not in state_cols:
+            c.execute(text('ALTER TABLE active_logic_state ADD COLUMN start_result VARCHAR(10)'))
         c.execute(text('''CREATE TABLE IF NOT EXISTS predictions (
             target_issue VARCHAR(80) PRIMARY KEY, prediction VARCHAR(10) NOT NULL,
             actual VARCHAR(10), actual_number INTEGER, result VARCHAR(10) NOT NULL,
@@ -154,16 +160,51 @@ def get_enabled_methods():
     return [m for m in METHODS if int(m['id']) not in disabled]
 
 
-def make_prediction(data):
+def get_active_logic_id():
+    with engine.connect() as c:
+        row = c.execute(text('SELECT logic_id FROM active_logic_state WHERE slot=1')).first()
+    return int(row[0]) if row else None
+
+
+def get_active_start_result():
+    with engine.connect() as c:
+        row = c.execute(text('SELECT start_result FROM active_logic_state WHERE slot=1')).first()
+    return row[0] if row else None
+
+
+def set_active_logic_id(logic_id, reset_start=True):
+    with engine.begin() as c:
+        c.execute(text('''INSERT INTO active_logic_state(slot,logic_id,start_result) VALUES(1,:id,NULL)
+            ON CONFLICT(slot) DO UPDATE SET logic_id=excluded.logic_id,
+            start_result=CASE WHEN :reset_start=1 THEN NULL ELSE active_logic_state.start_result END'''),
+            {'id': int(logic_id), 'reset_start': 1 if reset_start else 0})
+
+
+def set_active_start_result(result):
+    with engine.begin() as c:
+        c.execute(text('UPDATE active_logic_state SET start_result=:result WHERE slot=1'), {'result': result})
+
+
+def choose_lowest_accuracy_logic(data, active_methods):
+    if not active_methods:
+        return None
+    ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in active_methods]
+    return min(ranked, key=lambda item: (item['accuracy'], item['id']))
+
+
+def make_prediction(data, selected_method=None):
     # 100 completed periods plus the current latest result are required.
     if len(data) < 101:
         return None
     active_methods = get_enabled_methods()
     if not active_methods:
         return None
-    ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in active_methods]
-    # Exactly one individual logic is selected; no family voting or tie aggregation.
-    best = min(ranked, key=lambda item: (item['accuracy'], item['id']))
+    if selected_method is None:
+        selected_method = choose_lowest_accuracy_logic(data, active_methods)
+    if selected_method is None:
+        return None
+    # The active logic stays locked until the first result opposite to its first settled result.
+    best = {**selected_method, 'accuracy': calculate_accuracy(selected_method, data)}
     size = run_single_method(best, data)
     freq = [0] * 10
     for row in data[:100]:
@@ -182,7 +223,7 @@ def make_prediction(data):
         'consensus': best['accuracy'], 'bigVotes': 1 if size == 'BIG' else 0,
         'smallVotes': 1 if size == 'SMALL' else 0, 'activeMethods': 1,
         'useAccuracyMode': True, 'topAccuracy': best['accuracy'],
-        'votingRule': 'single_lowest_accuracy_logic_last_100', 'votingMethods': [best['name']],
+        'votingRule': 'lock_until_opposite_of_first_result_then_lowest_accuracy_last_100', 'votingMethods': [best['name']],
         'logicId': best['id'], 'logicName': best['name'], 'logicAccuracy': best['accuracy'],
         'votingMethodDetails': [{'id': best['id'], 'name': best['name'],
                                  'accuracy': best['accuracy'], 'prediction': size}]
@@ -222,15 +263,47 @@ def process_cycle():
     actual_map={r['issue']:r for r in rows}
     now=datetime.now(timezone.utc).isoformat()
     # Always settle older predictions first, even while waiting for enough accuracy data.
+    newly_lost = False
     with engine.begin() as c:
-        pending=c.execute(text("SELECT target_issue,prediction FROM predictions WHERE result='PENDING'")).mappings().all()
+        pending=c.execute(text("SELECT target_issue,prediction,logic_name FROM predictions WHERE result='PENDING'")).mappings().all()
+        settled_events = []
         for old in pending:
             actual=actual_map.get(old['target_issue'])
             if actual:
                 result='WIN' if old['prediction']==actual['size'] else 'LOSS'
                 c.execute(text("UPDATE predictions SET actual=:a,actual_number=:n,result=:r WHERE target_issue=:i"),
                     {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
-    p=make_prediction(rows)
+                settled_events.append({'result': result, 'logic_name': old['logic_name']})
+
+    active_methods = get_enabled_methods()
+    if not active_methods:
+        logging.info('Collector cycle: all logics disabled')
+        return
+    active_ids = {int(m['id']) for m in active_methods}
+    selected_id = get_active_logic_id()
+    # Lock rule: remember the first settled outcome for the selected logic.
+    # Re-select only when that logic later gets the opposite outcome.
+    active_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
+    active_name = active_method['name'] if active_method else None
+    start_result = get_active_start_result()
+    switch_now = selected_id not in active_ids
+    if not switch_now and active_name:
+        for event in settled_events:
+            if event['logic_name'] != active_name:
+                continue
+            if start_result is None:
+                start_result = event['result']
+                set_active_start_result(start_result)
+            elif event['result'] != start_result:
+                switch_now = True
+                break
+    if switch_now:
+        selected = choose_lowest_accuracy_logic(rows, active_methods) if len(rows) >= 101 else None
+        if selected:
+            selected_id = int(selected['id'])
+            set_active_logic_id(selected_id, reset_start=True)
+    selected_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
+    p=make_prediction(rows, selected_method)
     if not p or p['nextIssue']=='--':
         reason = 'all logics disabled' if not get_enabled_methods() else 'waiting for 101 records'
         logging.info('Collector cycle: fetched=%s latest=%s; %s',len(items),items[0]['issue'],reason)
@@ -240,8 +313,8 @@ def process_cycle():
             VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic_name,:logic_accuracy)
             ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,logic_name=excluded.logic_name,logic_accuracy=excluded.logic_accuracy WHERE predictions.result='PENDING' '''),
             {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic_name':p['logicName'],'logic_accuracy':p['logicAccuracy']})
-    logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s lowest_accuracy=%s selected_logic=%s',
-        len(items),items[0]['issue'],p['nextIssue'],p['size'],p['topAccuracy'],p['activeMethods'])
+    logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s selected_logic=%s accuracy=%s switched_after_loss=%s',
+        len(items),items[0]['issue'],p['nextIssue'],p['size'],p['logicName'],p['logicAccuracy'],switch_now)
 
 
 def collector_loop():
@@ -326,7 +399,7 @@ def state():
             'smallVotes': 1 if latest_prediction['prediction'] == 'SMALL' else 0,
             'activeMethods': 1, 'useAccuracyMode': True,
             'topAccuracy': latest_prediction['logicAccuracy'] or 0,
-            'votingRule': 'single_lowest_accuracy_logic_last_100',
+            'votingRule': 'lock_until_opposite_of_first_result_then_lowest_accuracy_last_100',
             'votingMethods': [latest_prediction['logicName']],
             'logicName': latest_prediction['logicName'],
             'logicAccuracy': latest_prediction['logicAccuracy'],

@@ -38,8 +38,12 @@ The app uses one Gunicorn worker because the collector runs in a background thre
 
 Prediction engine update (Nov 2026):
 - Family voting has been removed.
-- Each of the 108 individual logics is backtested against the last 100 completed periods.
-- Only the single logic with the lowest accuracy is selected; ties are resolved by the lower method ID.
+- पहली बार 108 enabled logics में से last 100 completed periods पर सबसे कम accuracy वाला एक logic चुना जाता है (tie में छोटा ID)।
+- चुने हुए logic की पहली settled prediction का परिणाम (WIN या LOSS) lock का आधार बनेगा।
+- यदि पहली settled prediction LOSS है, तो उसी logic से तब तक prediction जारी रहेगी जब तक पहली WIN न आ जाए।
+- यदि पहली settled prediction WIN है, तो उसी logic से तब तक prediction जारी रहेगी जब तक पहली LOSS न आ जाए।
+- पहली बार विपरीत परिणाम मिलते ही सभी enabled logics का last 100 completed periods पर दोबारा analysis होगा और सबसे कम accuracy वाला logic चुना जाएगा।
+- चुना हुआ logic database में save रहता है, इसलिए server restart के बाद भी selection बना रहता है।
 - At least 101 stored result rows are required (100 completed periods plus the latest result).
 - API result history and saved prediction history remain separate; clearing prediction history does not delete API results.
 
@@ -71,3 +75,10 @@ Performance/API update:
 - Dashboard state also reuses the collector's saved prediction.
 - Public API responses include CORS and no-cache headers.
 - Upstream WinGo request uses a shorter connect/read timeout so a stalled source does not block a collector cycle for 20 seconds.
+
+
+Logic switching update:
+- The first settled result (WIN or LOSS) of a newly selected logic establishes its lock direction.
+- If that first result is LOSS, keep the same logic until its first WIN. If it is WIN, keep the same logic until its first LOSS.
+- On the first opposite result, re-evaluate enabled logics over the last 100 completed periods and select the single lowest-accuracy logic.
+- The active logic ID is stored in active_logic_state and survives redeploy/restart when the same DATABASE_URL is retained.
