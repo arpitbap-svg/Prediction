@@ -9,6 +9,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 app = Flask(__name__, static_folder='static')
 API_BASE = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json?pageSize=10&pageNo={page}'
 POLL_SECONDS = max(3, int(os.getenv('POLL_SECONDS', '3')))
+API_CONNECT_TIMEOUT = max(2, float(os.getenv('API_CONNECT_TIMEOUT', '4')))
+API_READ_TIMEOUT = max(3, float(os.getenv('API_READ_TIMEOUT', '7')))
+API_RETRIES = max(1, min(5, int(os.getenv('API_RETRIES', '3'))))
+collector_status = {'last_success': None, 'last_attempt': None, 'last_error': None, 'consecutive_failures': 0, 'last_rows': 0}
+collector_status_lock = threading.Lock()
+cycle_lock = threading.Lock()
 DB_URL = os.getenv('DATABASE_URL', '').strip()
 if DB_URL.startswith('postgres://'):
     DB_URL = DB_URL.replace('postgres://', 'postgresql+psycopg2://', 1)
@@ -231,14 +237,35 @@ def make_prediction(data, selected_method=None):
 
 
 def db_rows(limit=1500):
+    # Period IDs are fixed-width numeric strings in this feed, so descending SQL order
+    # lets the collector read only the recent window instead of loading the full DB each cycle.
     with engine.connect() as c:
         if limit is None:
             rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results')).mappings().all()
         else:
-            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results'),{'lim':limit}).mappings().all()
+            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results ORDER BY issue DESC LIMIT :lim'), {'lim': int(limit)}).mappings().all()
     out=[{'issue':r['issue'],'number':r['number'],'size':r['size'],'colour':r['colour'],'time':r['draw_time'] or ''} for r in rows]
     out.sort(key=lambda r: int(r['issue']) if str(r['issue']).isdigit() else str(r['issue']), reverse=True)
     return out if limit is None else out[:limit]
+
+
+def fetch_latest_api_items():
+    headers={'Accept':'application/json','User-Agent':'Mozilla/5.0 (compatible; WinGoHistoryCollector/2.0)','Connection':'close'}
+    last_error = None
+    for attempt in range(API_RETRIES):
+        try:
+            response=requests.get(API_BASE.format(page=1), timeout=(API_CONNECT_TIMEOUT, API_READ_TIMEOUT), headers=headers)
+            response.raise_for_status()
+            items=normalise_api(response.json())
+            if not items:
+                raise RuntimeError('API response did not contain valid result rows')
+            return items
+        except Exception as exc:
+            last_error = exc
+            logging.warning('Upstream API attempt %s/%s failed: %s', attempt + 1, API_RETRIES, exc)
+            if attempt + 1 < API_RETRIES:
+                time.sleep(min(2 ** attempt, 4))
+    raise RuntimeError(f'Upstream API unavailable after {API_RETRIES} attempts: {last_error}')
 
 
 def persist_batch(items):
@@ -253,77 +280,94 @@ def persist_batch(items):
 
 
 def process_cycle():
-    headers={'Accept':'application/json','User-Agent':'Mozilla/5.0 (compatible; WinGoHistoryCollector/1.0)'}
-    response=requests.get(API_BASE.format(page=1),timeout=(4, 8),headers=headers)
-    response.raise_for_status()
-    items=normalise_api(response.json())
-    if not items: raise RuntimeError('API response did not contain result rows')
-    persist_batch(items)
-    rows=db_rows(None)
-    actual_map={r['issue']:r for r in rows}
-    now=datetime.now(timezone.utc).isoformat()
-    # Always settle older predictions first, even while waiting for enough accuracy data.
-    newly_lost = False
-    with engine.begin() as c:
-        pending=c.execute(text("SELECT target_issue,prediction,logic_name FROM predictions WHERE result='PENDING'")).mappings().all()
-        settled_events = []
-        for old in pending:
-            actual=actual_map.get(old['target_issue'])
-            if actual:
-                result='WIN' if old['prediction']==actual['size'] else 'LOSS'
-                c.execute(text("UPDATE predictions SET actual=:a,actual_number=:n,result=:r WHERE target_issue=:i"),
-                    {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
-                settled_events.append({'result': result, 'logic_name': old['logic_name']})
-
-    active_methods = get_enabled_methods()
-    if not active_methods:
-        logging.info('Collector cycle: all logics disabled')
+    # Never let two collector cycles overlap (e.g. after a slow upstream response).
+    if not cycle_lock.acquire(blocking=False):
+        logging.warning('Collector cycle skipped: previous cycle is still running')
         return
-    active_ids = {int(m['id']) for m in active_methods}
-    selected_id = get_active_logic_id()
-    # Lock rule: remember the first settled outcome for the selected logic.
-    # Re-select only when that logic later gets the opposite outcome.
-    active_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
-    active_name = active_method['name'] if active_method else None
-    start_result = get_active_start_result()
-    switch_now = selected_id not in active_ids
-    if not switch_now and active_name:
-        for event in settled_events:
-            if event['logic_name'] != active_name:
-                continue
-            if start_result is None:
-                start_result = event['result']
-                set_active_start_result(start_result)
-            elif event['result'] != start_result:
-                switch_now = True
-                break
-    if switch_now:
-        selected = choose_lowest_accuracy_logic(rows, active_methods) if len(rows) >= 101 else None
-        if selected:
-            selected_id = int(selected['id'])
-            set_active_logic_id(selected_id, reset_start=True)
-    selected_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
-    p=make_prediction(rows, selected_method)
-    if not p or p['nextIssue']=='--':
-        reason = 'all logics disabled' if not get_enabled_methods() else 'waiting for 101 records'
-        logging.info('Collector cycle: fetched=%s latest=%s; %s',len(items),items[0]['issue'],reason)
-        return
-    with engine.begin() as c:
-        c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy)
-            VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic_name,:logic_accuracy)
-            ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,logic_name=excluded.logic_name,logic_accuracy=excluded.logic_accuracy WHERE predictions.result='PENDING' '''),
-            {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic_name':p['logicName'],'logic_accuracy':p['logicAccuracy']})
-    logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s selected_logic=%s accuracy=%s switched_after_loss=%s',
-        len(items),items[0]['issue'],p['nextIssue'],p['size'],p['logicName'],p['logicAccuracy'],switch_now)
+    try:
+        with collector_status_lock:
+            collector_status['last_attempt'] = datetime.now(timezone.utc).isoformat()
+        items = fetch_latest_api_items()
+        persist_batch(items)
+        with collector_status_lock:
+            collector_status['last_success'] = datetime.now(timezone.utc).isoformat()
+            collector_status['last_error'] = None
+            collector_status['consecutive_failures'] = 0
+            collector_status['last_rows'] = len(items)
+        rows=db_rows(1500)
+        actual_map={r['issue']:r for r in rows}
+        now=datetime.now(timezone.utc).isoformat()
+        # Always settle older predictions first, even while waiting for enough accuracy data.
+        newly_lost = False
+        with engine.begin() as c:
+            pending=c.execute(text("SELECT target_issue,prediction,logic_name FROM predictions WHERE result='PENDING'")).mappings().all()
+            settled_events = []
+            for old in pending:
+                actual=actual_map.get(old['target_issue'])
+                if actual:
+                    result='WIN' if old['prediction']==actual['size'] else 'LOSS'
+                    c.execute(text("UPDATE predictions SET actual=:a,actual_number=:n,result=:r WHERE target_issue=:i"),
+                        {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
+                    settled_events.append({'result': result, 'logic_name': old['logic_name']})
 
+        active_methods = get_enabled_methods()
+        if not active_methods:
+            logging.info('Collector cycle: all logics disabled')
+            return
+        active_ids = {int(m['id']) for m in active_methods}
+        selected_id = get_active_logic_id()
+        # Lock rule: remember the first settled outcome for the selected logic.
+        # Re-select only when that logic later gets the opposite outcome.
+        active_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
+        active_name = active_method['name'] if active_method else None
+        start_result = get_active_start_result()
+        switch_now = selected_id not in active_ids
+        if not switch_now and active_name:
+            for event in settled_events:
+                if event['logic_name'] != active_name:
+                    continue
+                if start_result is None:
+                    start_result = event['result']
+                    set_active_start_result(start_result)
+                elif event['result'] != start_result:
+                    switch_now = True
+                    break
+        if switch_now:
+            selected = choose_lowest_accuracy_logic(rows, active_methods) if len(rows) >= 101 else None
+            if selected:
+                selected_id = int(selected['id'])
+                set_active_logic_id(selected_id, reset_start=True)
+        selected_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
+        p=make_prediction(rows, selected_method)
+        if not p or p['nextIssue']=='--':
+            reason = 'all logics disabled' if not get_enabled_methods() else 'waiting for 101 records'
+            logging.info('Collector cycle: fetched=%s latest=%s; %s',len(items),items[0]['issue'],reason)
+            return
+        with engine.begin() as c:
+            c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy)
+                VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic_name,:logic_accuracy)
+                ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,logic_name=excluded.logic_name,logic_accuracy=excluded.logic_accuracy WHERE predictions.result='PENDING' '''),
+                {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic_name':p['logicName'],'logic_accuracy':p['logicAccuracy']})
+        logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s selected_logic=%s accuracy=%s switched_after_opposite_result=%s',
+            len(items),items[0]['issue'],p['nextIssue'],p['size'],p['logicName'],p['logicAccuracy'],switch_now)
+    finally:
+        cycle_lock.release()
 
 def collector_loop():
     # One initial cycle, then every 3 seconds by default. A platform restart resets this timer.
     while True:
         started=time.time()
-        try: process_cycle()
-        except Exception as exc: logging.exception('Collector error: %s',exc)
-        time.sleep(max(1, POLL_SECONDS-(time.time()-started)))
+        try:
+            process_cycle()
+        except Exception as exc:
+            logging.exception('Collector error: %s',exc)
+            with collector_status_lock:
+                collector_status['last_error'] = str(exc)[:500]
+                collector_status['consecutive_failures'] += 1
+        with collector_status_lock:
+            failures = collector_status['consecutive_failures']
+        target_delay = min(POLL_SECONDS * (2 ** min(failures, 4)), 30) if failures else POLL_SECONDS
+        time.sleep(max(1, target_delay-(time.time()-started)))
 
 
 @app.after_request
@@ -373,20 +417,28 @@ def bulk_toggle_logics():
 
 
 @app.get('/health')
-def health(): return jsonify({'ok':True,'service':'wingo-collector','poll_seconds':POLL_SECONDS})
+def health():
+    with collector_status_lock:
+        status = dict(collector_status)
+    return jsonify({'ok':True,'service':'wingo-collector','poll_seconds':POLL_SECONDS,
+                    'upstream':'LIVE' if status['last_success'] and not status['last_error'] else 'WAITING_OR_ERROR',
+                    'collector':status})
 
 @app.get('/api/state')
 def state():
-    rows=db_rows(None)
+    rows=db_rows(1500)
     with engine.connect() as c:
         preds=c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy
-            FROM predictions ORDER BY target_issue DESC''')).mappings().all()
+            FROM predictions ORDER BY target_issue DESC LIMIT 1000''')).mappings().all()
         total=c.execute(text('SELECT COUNT(*) FROM results')).scalar_one()
     predictions=[{'targetIssue':r['target_issue'],'prediction':r['prediction'],'actual':r['actual'] or '--','actualNumber':r['actual_number'],'result':r['result'],'savedAt':r['saved_at'],'colour':r['colour'],'number':r['number_pick'],'consensus':r['consensus'],'logicName':r['logic_name'] or '--','logicAccuracy':r['logic_accuracy']} for r in preds]
     predictions.sort(key=lambda p: int(p['targetIssue']) if str(p['targetIssue']).isdigit() else str(p['targetIssue']), reverse=True)
     # Serve the prediction already calculated by the background collector.
     # Do not rerun all 108 logic evaluations on every dashboard refresh.
-    latest_prediction = next((p for p in predictions if p['result'] == 'PENDING'), None)
+    latest = rows[0] if rows else None
+    latest_issue_num = int(latest['issue']) if latest and str(latest['issue']).isdigit() else None
+    latest_prediction = next((p for p in predictions if p['result'] == 'PENDING' and
+                              (latest_issue_num is None or not str(p['targetIssue']).isdigit() or int(p['targetIssue']) > latest_issue_num)), None)
     current_engine = None
     if latest_prediction:
         current_engine = {
@@ -413,8 +465,9 @@ def state():
     api_history = rows[:10]
     settled=[p for p in predictions if p['result'] in ('WIN','LOSS')]
     wins=sum(1 for p in settled if p['result']=='WIN')
-    latest=rows[0] if rows else None
-    return jsonify({'history':api_history,'predictions':predictions,'latestPrediction':latest_prediction,'totalHistory':total,'latest':latest,'stats':{'settled':len(settled),'wins':wins,'losses':len(settled)-wins,'accuracy':round(wins/len(settled)*100) if settled else 0},'serverTime':datetime.now(timezone.utc).isoformat(),'pollSeconds':POLL_SECONDS,'engine':current_engine})
+    with collector_status_lock:
+        collector = dict(collector_status)
+    return jsonify({'history':api_history,'predictions':predictions,'latestPrediction':latest_prediction,'totalHistory':total,'latest':latest,'stats':{'settled':len(settled),'wins':wins,'losses':len(settled)-wins,'accuracy':round(wins/len(settled)*100) if settled else 0},'serverTime':datetime.now(timezone.utc).isoformat(),'pollSeconds':POLL_SECONDS,'collector':collector,'engine':current_engine})
 
 
 @app.get('/api/prediction')
@@ -425,6 +478,9 @@ def prediction_json():
             FROM predictions WHERE result='PENDING' ORDER BY target_issue DESC LIMIT 1""")).mappings().first()
         previous = c.execute(text("""SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy
             FROM predictions WHERE result IN ('WIN','LOSS') ORDER BY target_issue DESC LIMIT 1""")).mappings().first()
+        latest_result = c.execute(text('SELECT issue FROM results ORDER BY issue DESC LIMIT 1')).first()
+        if current and latest_result and str(current['target_issue']).isdigit() and str(latest_result[0]).isdigit() and int(current['target_issue']) <= int(latest_result[0]):
+            current = None
 
     def public_record(r):
         if not r: return None
@@ -441,11 +497,14 @@ def prediction_json():
             'createdAt': r['saved_at']
         }
 
+    with collector_status_lock:
+        collector = dict(collector_status)
     response = jsonify({
         'ok': True,
         'game': 'WinGo_30S',
         'currentPrediction': public_record(current),
         'previousPrediction': public_record(previous),
+        'collector': collector,
         'updatedAt': datetime.now(timezone.utc).isoformat()
     })
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'

@@ -2,7 +2,7 @@ WinGo 30S Cloud Collector — Render Deployment
 ==============================================
 
 Is project mein:
-- Python server WinGo_30S API ko default har 3 second mein poll karta hai.
+- Python server WinGo_30S API ko default har 3 second mein poll karta hai. Timeout par 3 attempts (connect/read timeout ke saath) aur automatic backoff retry hota hai.
 - Result aur 108-method engine ki prediction server-side calculate hoti hai.
 - Result/prediction database mein store hoti hai; target period milne par WIN/LOSS settle hota hai.
 - Website khuli na ho tab bhi collector server par kaam karta hai, jab tak Render instance chal raha ho.
@@ -32,7 +32,7 @@ IMPORTANT:
 
 CONFIG
 ------
-POLL_SECONDS defaults to 30. Change it only if you intentionally want a different polling interval.
+POLL_SECONDS defaults to 3 seconds (minimum 3). API_CONNECT_TIMEOUT defaults to 4 seconds, API_READ_TIMEOUT to 7 seconds, and API_RETRIES to 3 attempts. Upstream failure par retry interval automatically badhkar maximum 30 seconds hota hai; successful fetch ke baad normal polling resume hoti hai.
 The app uses one Gunicorn worker because the collector runs in a background thread inside the web process.
 
 
@@ -82,3 +82,15 @@ Logic switching update:
 - If that first result is LOSS, keep the same logic until its first WIN. If it is WIN, keep the same logic until its first LOSS.
 - On the first opposite result, re-evaluate enabled logics over the last 100 completed periods and select the single lowest-accuracy logic.
 - The active logic ID is stored in active_logic_state and survives redeploy/restart when the same DATABASE_URL is retained.
+
+
+TIMEOUT / STALE-PREDICTION SAFEGUARDS (Nov 2026)
+------------------------------------------------
+- Upstream request par bounded connect/read timeout aur up to 3 automatic attempts.
+- Repeated source failure par retry backoff maximum 30 seconds tak; successful fetch ke baad normal 3-second polling.
+- Collector cycles overlap nahi karte; ek slow cycle ke dauran doosra cycle start nahi hota.
+- Har cycle mein recent 1,500 saved results hi load hote hain; dashboard state recent rows/predictions return karti hai, full CSV export alag se complete rehta hai.
+- /health aur /api/state collector ka last success, last attempt, error, consecutive failures aur returned row count dikhate hain.
+- Purani pending prediction ko current prediction ke roop mein nahi dikhaya jayega agar uska target period latest actual result ke barabar ya usse purana ho.
+- Browser dashboard request 8 seconds ke baad abort hoti hai aur next 3-second polling cycle mein retry karti hai; last rendered data screen par rehta hai.
+- Important: Render Free service inactivity ke baad sleep ho sakti hai. Dashboard band hone par external uptime ping (e.g. cron-job.org, every 5 minutes) configure karein, ya always-on paid instance use karein. Koi code Free-plan sleep/restarts ya third-party WinGo API outage ko 100% eliminate nahi kar sakta.
