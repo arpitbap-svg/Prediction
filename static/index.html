@@ -285,8 +285,10 @@ function render(){
 
 async function fetchHistory(){
  if(refreshBusy)return;refreshBusy=true;
+ const controller=new AbortController();
+ const timeoutId=setTimeout(()=>controller.abort(),8000);
  try{
-  const response=await fetch('/api/state?_='+Date.now(),{cache:'no-store',headers:{'Accept':'application/json'}});
+  const response=await fetch('/api/state?_='+Date.now(),{cache:'no-store',signal:controller.signal,headers:{'Accept':'application/json'}});
   if(!response.ok)throw new Error('Server HTTP '+response.status);
   const state=await response.json();
   rows=normalise({list:state.history||[]});
@@ -296,16 +298,23 @@ async function fetchHistory(){
   window.serverEngine=state.engine||null;
   window.enabledLogicIds=state.enabledLogicIds||METHODS.map(m=>m.id);
   if(!rows.length)throw new Error('Server par abhi history nahi mili; collector ka pehla cycle chal raha ho sakta hai.');
-  $('dot').className='dot live';$('status').textContent='LIVE · Cloud server connected';
-  $('apiError').textContent='';$('dataSource').textContent=`Source: Cloud collector · ${state.pollSeconds||3}s polling`;
+  const collector=state.collector||{};
+  if(collector.last_error){
+   $('dot').className='dot err';$('status').textContent='Saved data · upstream retrying';
+   $('apiError').textContent='Collector/API issue. Automatic retry active; last saved results are preserved. '+collector.last_error;
+  }else{
+   $('dot').className='dot live';$('status').textContent='LIVE · Cloud server connected';
+   $('apiError').textContent='';
+  }
+  $('dataSource').textContent=`Source: Cloud collector · ${state.pollSeconds||3}s polling`;
   $('lastUpdate').textContent='Dashboard sync: '+new Date().toLocaleTimeString();
   $('dataCount').textContent=(state.totalHistory||rows.length)+' saved records';
   render();
  }catch(err){
-  $('dot').className='dot err';$('status').textContent='Server/API error';
-  $('apiError').textContent=err.message;
-  $('dataSource').textContent='Cloud data unavailable; check Render logs and DATABASE_URL.';
- }finally{refreshBusy=false}
+  $('dot').className='dot err';$('status').textContent='Connection issue · retrying';
+  $('apiError').textContent=err.name==='AbortError'?'Dashboard request timed out after 8 seconds. Automatic retry will continue; last displayed data is retained.':err.message+' · automatic retry active.';
+  $('dataSource').textContent='Showing last saved data, if available.';
+ }finally{clearTimeout(timeoutId);refreshBusy=false}
 }
 
 let logicRows=[];
