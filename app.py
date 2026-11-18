@@ -40,6 +40,9 @@ def init_db():
         c.execute(text('''CREATE TABLE IF NOT EXISTS active_logic_state (
             slot INTEGER PRIMARY KEY, logic_id INTEGER NOT NULL, start_result VARCHAR(10)
         )'''))
+        c.execute(text('''CREATE TABLE IF NOT EXISTS prediction_cooldown (
+            slot INTEGER PRIMARY KEY, checkpoint_issue VARCHAR(80) NOT NULL
+        )'''))
         state_cols = {col['name'] for col in inspect(engine).get_columns('active_logic_state')}
         if 'start_result' not in state_cols:
             c.execute(text('ALTER TABLE active_logic_state ADD COLUMN start_result VARCHAR(10)'))
@@ -325,11 +328,16 @@ def process_cycle():
                         ON CONFLICT(logic_id) DO UPDATE SET enabled=0'''), {'id': logic_id})
                     auto_disabled.append(method['name'])
             if auto_disabled:
-                # Clear all generated predictions, but preserve the upstream draw results.
+                # Match the Clear Prediction History button: clear generated predictions
+                # and active selection/lock state, but preserve actual WinGo draw results.
+                # The same cycle will immediately re-rank enabled logics on recent draw data.
                 c.execute(text('DELETE FROM predictions'))
                 c.execute(text('DELETE FROM active_logic_state'))
+                c.execute(text('DELETE FROM prediction_cooldown'))
         if auto_disabled:
-            logging.warning('Auto-disabled logic after 6-result streak; full prediction history reset: %s', ', '.join(auto_disabled))
+            logging.warning('Auto-disabled logic after 6-result streak; prediction history and streak counters reset; reselecting immediately from recent 100 periods: %s', ', '.join(auto_disabled))
+            # Do not return: continue this collector cycle and create the next prediction
+            # using the best eligible logic among those still enabled.
 
         active_methods = get_enabled_methods()
         if not active_methods:
@@ -488,7 +496,16 @@ def state():
     wins=sum(1 for p in settled if p['result']=='WIN')
     with collector_status_lock:
         collector = dict(collector_status)
-    return jsonify({'history':api_history,'predictions':predictions,'latestPrediction':latest_prediction,'totalHistory':total,'latest':latest,'stats':{'settled':len(settled),'wins':wins,'losses':len(settled)-wins,'accuracy':round(wins/len(settled)*100) if settled else 0},'serverTime':datetime.now(timezone.utc).isoformat(),'pollSeconds':POLL_SECONDS,'collector':collector,'engine':current_engine})
+    with engine.connect() as c:
+        cooldown = c.execute(text('SELECT checkpoint_issue FROM prediction_cooldown WHERE slot=1')).first()
+    cooldown_info = None
+    if cooldown:
+        checkpoint_issue = str(cooldown[0])
+        def newer_than_checkpoint(issue):
+            try: return int(issue) > int(checkpoint_issue)
+            except (TypeError, ValueError): return str(issue) > checkpoint_issue
+        cooldown_info = {'active': True, 'requiredNewPeriods': 100, 'collectedNewPeriods': sum(1 for row in rows if newer_than_checkpoint(row['issue']))}
+    return jsonify({'history':api_history,'predictions':predictions,'latestPrediction':latest_prediction,'cooldown':cooldown_info,'totalHistory':total,'latest':latest,'stats':{'settled':len(settled),'wins':wins,'losses':len(settled)-wins,'accuracy':round(wins/len(settled)*100) if settled else 0},'serverTime':datetime.now(timezone.utc).isoformat(),'pollSeconds':POLL_SECONDS,'collector':collector,'engine':current_engine})
 
 
 @app.get('/api/prediction')
@@ -551,10 +568,13 @@ def predictions_csv():
 
 @app.post('/api/predictions/clear')
 def clear_prediction_history():
-    # Clear generated prediction records only; keep the actual API draw history.
+    # Same reset semantics as the automatic 6-result streak circuit breaker.
+    # Keep actual draw results so the next cycle can immediately re-analyse recent 100 periods.
     with engine.begin() as c:
         c.execute(text('DELETE FROM predictions'))
-    return jsonify({'ok':True,'message':'Prediction history cleared; API history preserved.'})
+        c.execute(text('DELETE FROM active_logic_state'))
+        c.execute(text('DELETE FROM prediction_cooldown'))
+    return jsonify({'ok':True,'message':'Prediction history and streak counters cleared; actual draw history preserved. Logic selection will be recalculated from recent 100 periods.'})
 
 
 init_db()
