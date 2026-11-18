@@ -310,6 +310,27 @@ def process_cycle():
                         {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
                     settled_events.append({'result': result, 'logic_name': old['logic_name']})
 
+        # Auto-disable any logic whose own settled prediction results reach
+        # more than five consecutive WINs or more than five consecutive LOSSes.
+        # The user's requested reset scope is the ENTIRE website prediction history.
+        auto_disabled = []
+        with engine.begin() as c:
+            for method in METHODS:
+                recent = c.execute(text('''SELECT result FROM predictions
+                    WHERE logic_name=:name AND result IN ('WIN','LOSS')
+                    ORDER BY target_issue DESC LIMIT 6'''), {'name': method['name']}).scalars().all()
+                if len(recent) == 6 and len(set(recent)) == 1:
+                    logic_id = int(method['id'])
+                    c.execute(text('''INSERT INTO logic_settings(logic_id,enabled) VALUES(:id,0)
+                        ON CONFLICT(logic_id) DO UPDATE SET enabled=0'''), {'id': logic_id})
+                    auto_disabled.append(method['name'])
+            if auto_disabled:
+                # Clear all generated predictions, but preserve the upstream draw results.
+                c.execute(text('DELETE FROM predictions'))
+                c.execute(text('DELETE FROM active_logic_state'))
+        if auto_disabled:
+            logging.warning('Auto-disabled logic after 6-result streak; full prediction history reset: %s', ', '.join(auto_disabled))
+
         active_methods = get_enabled_methods()
         if not active_methods:
             logging.info('Collector cycle: all logics disabled')
