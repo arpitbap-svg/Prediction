@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WinGo Pair Predictor</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --big: #ea580c;
+      --big-soft: #fff7ed;
+      --small: #2563eb;
+      --small-soft: #eff6ff;
+      --win: #16a34a;
+      --win-soft: #f0fdf4;
+      --loss: #dc2626;
+      --loss-soft: #fef2f2;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px 14px 40px;
+      line-height: 1.5;
+    }
+
+    .container { max-width: 680px; margin: 0 auto; }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      gap: 10px;
+    }
+
+    .title h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+    .subtitle { font-size: 0.8rem; color: var(--muted); }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 5px 11px;
+      border-radius: 999px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .dot.live { background: var(--win); box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+    }
+
+    /* Main Prediction */
+    .pred-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .label {
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .period-num { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+    .pair-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg);
+      padding: 6px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .pair-arrow { color: var(--muted); font-weight: 400; }
+
+    .pred-center {
+      text-align: center;
+      padding: 18px 12px;
+      border-radius: 14px;
+      margin-bottom: 18px;
+      background: var(--bg);
+    }
+
+    .pred-center.BIG { background: var(--big-soft); }
+    .pred-center.SMALL { background: var(--small-soft); }
+
+    .pred-value { font-size: 2.3rem; font-weight: 800; letter-spacing: 0.04em; line-height: 1.1; margin-top: 4px; }
+    .pred-center.BIG .pred-value { color: var(--big); }
+    .pred-center.SMALL .pred-value { color: var(--small); }
+
+    .match-meta { font-size: 0.82rem; color: var(--muted); margin-top: 6px; }
+
+    .vote-labels { display: flex; justify-content: space-between; font-size: 0.84rem; font-weight: 600; margin-bottom: 7px; }
+    .big-txt { color: var(--big); }
+    .small-txt { color: var(--small); }
+
+    .bar-track { height: 10px; border-radius: 999px; background: var(--small); overflow: hidden; display: flex; }
+    .bar-big { background: var(--big); height: 100%; transition: width 0.35s ease; }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      text-align: center;
+    }
+    .stat-val { font-size: 1.45rem; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .stat-win { color: var(--win); }
+    .stat-loss { color: var(--loss); }
+
+    /* CSV Upload Bar */
+    .csv-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .csv-meta { font-size: 0.84rem; color: var(--text); font-weight: 600; }
+    .csv-sub { font-size: 0.76rem; color: var(--muted); }
+
+    .csv-actions { display: flex; align-items: center; gap: 8px; }
+
+    .btn-primary {
+      background: var(--text);
+      color: #ffffff;
+      border: none;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 9px;
+      cursor: pointer;
+    }
+
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .upload-msg { font-size: 0.78rem; margin-top: 8px; font-weight: 600; }
+    .upload-msg.ok { color: var(--win); }
+    .upload-msg.err { color: var(--loss); }
+
+    /* History */
+    .history-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .history-head h2 { font-size: 1rem; font-weight: 700; }
+
+    .btn-clear {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .btn-clear:hover { border-color: var(--loss); color: var(--loss); background: var(--loss-soft); }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th {
+      text-align: left;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 10px 6px; border-bottom: 1px solid #f1f5f9; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: none; }
+
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; }
+    .badge-BIG { background: var(--big-soft); color: var(--big); }
+    .badge-SMALL { background: var(--small-soft); color: var(--small); }
+    .badge-WIN { background: var(--win-soft); color: var(--win); }
+    .badge-LOSS { background: var(--loss-soft); color: var(--loss); }
+    .badge-PENDING { background: #f1f5f9; color: var(--muted); }
+    .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 0.88rem; }
+
+    @media (max-width: 480px) {
+      .pred-value { font-size: 1.9rem; }
+      .period-num { font-size: 0.92rem; }
+      td, th { font-size: 0.8rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title">
+        <h1>WinGo Pair Predictor</h1>
+        <div class="subtitle" id="csvSubtitle">Auto 3s Background Sync</div>
+      </div>
+      <div class="status-pill">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">Connecting</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="pred-top">
+        <div>
+          <div class="label">Next Period</div>
+          <div class="period-num" id="nextPeriod">—</div>
+        </div>
+        <div class="pair-box">
+          <span id="prevNum">-</span>
+          <span class="pair-arrow">→</span>
+          <span id="latestNum">-</span>
+        </div>
+      </div>
+
+      <div id="predBox" class="pred-center">
+        <div class="label">Predicted Result</div>
+        <div class="pred-value" id="predValue">—</div>
+        <div class="match-meta" id="matchMeta">Waiting for live data...</div>
+      </div>
+
+      <div class="vote-labels">
+        <span class="big-txt" id="bigLabel">BIG: 0 (0%)</span>
+        <span class="small-txt" id="smallLabel">SMALL: 0 (0%)</span>
+      </div>
+      <div class="bar-track">
+        <div id="barBig" class="bar-big" style="width: 50%"></div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="label">Total Win</div>
+        <div class="stat-val stat-win" id="totalWin">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Total Loss</div>
+        <div class="stat-val stat-loss" id="totalLoss">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Win Rate</div>
+        <div class="stat-val" id="winRate">0%</div>
+      </div>
+    </div>
+
+    <!-- Clean CSV Upload & Save Card -->
+    <div class="card">
+      <div class="csv-bar">
+        <div>
+          <div class="csv-meta" id="csvName">Active CSV: Loading...</div>
+          <div class="csv-sub" id="csvDetails">—</div>
+        </div>
+        <div class="csv-actions">
+          <input type="file" id="csvFile" accept=".csv" style="display:none" onchange="uploadCSV()" />
+          <button class="btn-primary" id="uploadBtn" onclick="document.getElementById('csvFile').click()">
+            Upload & Save CSV
+          </button>
+        </div>
+      </div>
+      <div id="uploadMsg" class="upload-msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="history-head">
+        <h2>Prediction History</h2>
+        <button class="btn-clear" onclick="clearHistory()">Clear History</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Pair</th>
+              <th>Pred</th>
+              <th>Actual</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr><td colspan="5" class="empty">Loading history...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function fetchState() {
+      try {
+        const res = await fetch("/api/state", { cache: "no-store" });
+        const d = await res.json();
+
+        const dot = document.getElementById("statusDot");
+        const statusTxt = document.getElementById("statusText");
+        if (d.status === "Live") {
+          dot.classList.add("live");
+          statusTxt.textContent = "Live · " + (d.last_updated || "");
+        } else {
+          dot.classList.remove("live");
+          statusTxt.textContent = d.status || "Offline";
+        }
+
+        if (d.csv_info) {
+          document.getElementById("csvName").textContent = `Active CSV: ${d.csv_info.filename}`;
+          document.getElementById("csvDetails").textContent =
+            `${d.csv_info.valid_records.toLocaleString()} valid records · Saved: ${d.csv_info.saved_at}`;
+          document.getElementById("csvSubtitle").textContent =
+            `${d.csv_info.valid_records.toLocaleString()} CSV Records · Auto 3s Sync`;
+        }
+
+        document.getElementById("nextPeriod").textContent = d.next_period || "—";
+
+        if (d.pair) {
+          document.getElementById("prevNum").textContent = d.pair[0];
+          document.getElementById("latestNum").textContent = d.pair[1];
+        }
+
+        const predBox = document.getElementById("predBox");
+        predBox.className = "pred-center " + (d.prediction || "");
+        document.getElementById("predValue").textContent = d.prediction || "—";
+
+        if (d.total_matches > 0) {
+          document.getElementById("matchMeta").textContent = `Historical Matches: ${d.total_matches} times`;
+        }
+
+        document.getElementById("bigLabel").textContent = `BIG: ${d.big_votes} (${d.big_pct}%)`;
+        document.getElementById("smallLabel").textContent = `SMALL: ${d.small_votes} (${d.small_pct}%)`;
+        document.getElementById("barBig").style.width = `${d.big_pct}%`;
+
+        document.getElementById("totalWin").textContent = d.wins;
+        document.getElementById("totalLoss").textContent = d.losses;
+        document.getElementById("winRate").textContent = `${d.win_rate}%`;
+
+        const tbody = document.getElementById("historyBody");
+        if (!d.history || d.history.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty">Abhi koi history nahi hai</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = d.history.slice(0, 50).map(row => {
+          const shortPeriod = row.period.slice(-6);
+          const actual = row.actual_num !== null ? `${row.actual_num} (${row.actual_size})` : "—";
+          return `
+            <tr>
+              <td>#${shortPeriod}</td>
+              <td>${row.pair}</td>
+              <td><span class="badge badge-${row.prediction}">${row.prediction}</span></td>
+              <td>${actual}</td>
+              <td><span class="badge badge-${row.status}">${row.status}</span></td>
+            </tr>
+          `;
+        }).join("");
+      } catch (err) {
+        document.getElementById("statusDot").classList.remove("live");
+        document.getElementById("statusText").textContent = "Server Offline";
+      }
+    }
+
+    async function uploadCSV() {
+      const input = document.getElementById("csvFile");
+      const file = input.files[0];
+      if (!file) return;
+
+      const btn = document.getElementById("uploadBtn");
+      const msg = document.getElementById("uploadMsg");
+      btn.disabled = true;
+      btn.textContent = "Saving...";
+      msg.textContent = "";
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch("/api/upload-csv", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.ok) {
+          msg.className = "upload-msg ok";
+          msg.textContent = `Saved! Ab background predictor is CSV (${data.csv_info.valid_records.toLocaleString()} records) se chalega.`;
+          fetchState();
+        } else {
+          msg.className = "upload-msg err";
+          msg.textContent = data.error || "Upload failed.";
+        }
+      } catch (e) {
+        msg.className = "upload-msg err";
+        msg.textContent = "Server error aaya upload karte waqt.";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Upload & Save CSV";
+        input.value = "";
+      }
+    }
+
+    async function clearHistory() {
+      if (!confirm("Kya aap puri prediction history clear karna chahte hain?")) return;
+      await fetch("/api/clear", { method: "POST" });
+      fetchState();
+    }
+
+    fetchState();
+    setInterval(fetchState, 3000);
+  </script>
+</body>
+  </html>
+  
