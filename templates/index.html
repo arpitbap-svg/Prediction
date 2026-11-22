@@ -128,7 +128,9 @@
     .bar-big { background: var(--big); height: 100%; transition: width 0.35s ease; }
 
     /* Stats */
-    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+    .stats-streak { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
+
     .stat-card {
       background: var(--card);
       border: 1px solid var(--border);
@@ -136,6 +138,7 @@
       padding: 14px;
       text-align: center;
     }
+
     .stat-val { font-size: 1.45rem; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
     .stat-win { color: var(--win); }
     .stat-loss { color: var(--loss); }
@@ -151,7 +154,6 @@
 
     .csv-meta { font-size: 0.84rem; color: var(--text); font-weight: 600; }
     .csv-sub { font-size: 0.76rem; color: var(--muted); }
-
     .csv-actions { display: flex; align-items: center; gap: 8px; }
 
     .btn-primary {
@@ -274,7 +276,17 @@
       </div>
     </div>
 
-    <!-- Clean CSV Upload & Save Card -->
+    <div class="stats-streak">
+      <div class="stat-card">
+        <div class="label">Max Win Streak</div>
+        <div class="stat-val stat-win" id="maxWinStreak">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Max Loss Streak</div>
+        <div class="stat-val stat-loss" id="maxLossStreak">0</div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="csv-bar">
         <div>
@@ -361,6 +373,8 @@
         document.getElementById("totalWin").textContent = d.wins;
         document.getElementById("totalLoss").textContent = d.losses;
         document.getElementById("winRate").textContent = `${d.win_rate}%`;
+        document.getElementById("maxWinStreak").textContent = d.max_win_streak || 0;
+        document.getElementById("maxLossStreak").textContent = d.max_loss_streak || 0;
 
         const tbody = document.getElementById("historyBody");
         if (!d.history || d.history.length === 0) {
@@ -432,5 +446,4 @@
     setInterval(fetchState, 3000);
   </script>
 </body>
-  </html>
-  
+</html>
