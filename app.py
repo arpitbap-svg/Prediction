@@ -149,7 +149,7 @@ def load_history():
 def save_history(history):
     try:
         with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history[:200], f)
+            json.dump(history, f)
     except Exception:
         pass
 
@@ -204,7 +204,6 @@ def process_api_data(draw_list):
                 "status": "PENDING",
                 "time": now_str
             })
-            state["history"] = state["history"][:200]
             changed = True
 
         if changed:
