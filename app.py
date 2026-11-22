@@ -15,7 +15,6 @@ HISTORY_FILE = "prediction_history.json"
 STATS_FILE = "saved_pair_stats.json"
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Default 16,906 valid CSV records (fallback agar koi nayi CSV upload na ho)
 DEFAULT_PAIR_STATS = {
     "0-0":{"big":85,"small":102},"0-1":{"big":80,"small":94},"0-2":{"big":100,"small":84},"0-3":{"big":73,"small":85},"0-4":{"big":81,"small":80},
     "0-5":{"big":87,"small":88},"0-6":{"big":75,"small":91},"0-7":{"big":95,"small":77},"0-8":{"big":97,"small":89},"0-9":{"big":80,"small":84},
@@ -40,6 +39,8 @@ DEFAULT_PAIR_STATS = {
 }
 
 state_lock = threading.Lock()
+worker_lock = threading.Lock()
+worker_started = False
 
 pair_stats = DEFAULT_PAIR_STATS.copy()
 csv_info = {
@@ -87,7 +88,6 @@ def parse_csv_content(text):
     if not reader.fieldnames:
         raise ValueError("CSV file khali hai ya headers nahi mile.")
 
-    # Column names flexibly match karein
     headers = {h.strip().lower(): h for h in reader.fieldnames}
     num_col = headers.get("actual number") or headers.get("number")
     res_col = headers.get("actual result") or headers.get("result")
@@ -182,7 +182,6 @@ def process_api_data(draw_list):
         small_pct = round((small_v / total) * 100, 1) if total > 0 else 50.0
         pred = "BIG" if big_v >= small_v else "SMALL"
 
-        # 1. Pending predictions ka WIN/LOSS check karein
         changed = False
         for row in state["history"]:
             if row["status"] == "PENDING" and row["period"] in result_map:
@@ -193,7 +192,6 @@ def process_api_data(draw_list):
                 row["status"] = "WIN" if row["prediction"] == actual_size else "LOSS"
                 changed = True
 
-        # 2. Naye next_period ki prediction add karein
         existing_periods = {row["period"] for row in state["history"]}
         if next_period not in existing_periods:
             state["history"].insert(0, {
@@ -211,7 +209,6 @@ def process_api_data(draw_list):
         if changed:
             save_history(state["history"])
 
-        # 3. Current state update karein
         state["status"] = "Live"
         state["last_updated"] = now_str
         state["latest_period"] = latest_period
@@ -226,12 +223,18 @@ def process_api_data(draw_list):
 
 
 def background_worker():
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://draw.ar-lottery01.com/",
+        "Origin": "https://draw.ar-lottery01.com"
+    }
     while True:
         try:
-            resp = requests.get(f"{API_URL}?ts={int(time.time() * 1000)}", headers=headers, timeout=8)
+            resp = requests.get(f"{API_URL}?ts={int(time.time() * 1000)}", headers=headers, timeout=10)
             if resp.status_code == 200:
-                draw_list = resp.json().get("data", {}).get("list", [])
+                payload = resp.json()
+                draw_list = payload.get("data", {}).get("list", [])
                 if draw_list:
                     process_api_data(draw_list)
                 else:
@@ -239,17 +242,28 @@ def background_worker():
                         state["status"] = "API Empty"
             else:
                 with state_lock:
-                    state["status"] = f"API Error ({resp.status_code})"
-        except Exception:
+                    state["status"] = f"API {resp.status_code}"
+        except Exception as e:
             with state_lock:
-                state["status"] = "Reconnecting..."
+                state["status"] = f"Err: {type(e).__name__}"
         time.sleep(3)
 
 
-# Startup initialization
-load_saved_stats()
-state["history"] = load_history()
-threading.Thread(target=background_worker, daemon=True).start()
+def ensure_worker_started():
+    global worker_started
+    if not worker_started:
+        with worker_lock:
+            if not worker_started:
+                load_saved_stats()
+                state["history"] = load_history()
+                t = threading.Thread(target=background_worker, daemon=True)
+                t.start()
+                worker_started = True
+
+
+@app.before_request
+def boot_worker():
+    ensure_worker_started()
 
 
 @app.route("/")
@@ -317,5 +331,6 @@ def health():
 
 
 if __name__ == "__main__":
+    ensure_worker_started()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
