@@ -305,7 +305,7 @@
 
     <div class="card">
       <div class="history-head">
-        <h2>Prediction History</h2>
+        <h2>Prediction History (<span id="historyCount">0</span>)</h2>
         <button class="btn-clear" onclick="clearHistory()">Clear History</button>
       </div>
       <div class="table-wrap">
@@ -376,13 +376,16 @@
         document.getElementById("maxWinStreak").textContent = d.max_win_streak || 0;
         document.getElementById("maxLossStreak").textContent = d.max_loss_streak || 0;
 
+        const history = d.history || [];
+        document.getElementById("historyCount").textContent = history.length;
+
         const tbody = document.getElementById("historyBody");
-        if (!d.history || d.history.length === 0) {
+        if (history.length === 0) {
           tbody.innerHTML = '<tr><td colspan="5" class="empty">Abhi koi history nahi hai</td></tr>';
           return;
         }
 
-        tbody.innerHTML = d.history.slice(0, 50).map(row => {
+        tbody.innerHTML = history.map(row => {
           const shortPeriod = row.period.slice(-6);
           const actual = row.actual_num !== null ? `${row.actual_num} (${row.actual_size})` : "—";
           return `
