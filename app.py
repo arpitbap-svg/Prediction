@@ -15,6 +15,7 @@ HISTORY_FILE = "prediction_history.json"
 STATS_FILE = "saved_pair_stats.json"
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Default 16,906 valid CSV records (fallback)
 DEFAULT_PAIR_STATS = {
     "0-0":{"big":85,"small":102},"0-1":{"big":80,"small":94},"0-2":{"big":100,"small":84},"0-3":{"big":73,"small":85},"0-4":{"big":81,"small":80},
     "0-5":{"big":87,"small":88},"0-6":{"big":75,"small":91},"0-7":{"big":95,"small":77},"0-8":{"big":97,"small":89},"0-9":{"big":80,"small":84},
@@ -274,8 +275,28 @@ def index():
 @app.route("/api/state")
 def api_state():
     with state_lock:
-        wins = sum(1 for r in state["history"] if r["status"] == "WIN")
-        losses = sum(1 for r in state["history"] if r["status"] == "LOSS")
+        wins = 0
+        losses = 0
+        cur_win = 0
+        cur_loss = 0
+        max_win_streak = 0
+        max_loss_streak = 0
+
+        for r in reversed(state["history"]):
+            st = r["status"]
+            if st == "WIN":
+                wins += 1
+                cur_win += 1
+                cur_loss = 0
+                if cur_win > max_win_streak:
+                    max_win_streak = cur_win
+            elif st == "LOSS":
+                losses += 1
+                cur_loss += 1
+                cur_win = 0
+                if cur_loss > max_loss_streak:
+                    max_loss_streak = cur_loss
+
         total_settled = wins + losses
         win_rate = round((wins / total_settled) * 100, 1) if total_settled > 0 else 0.0
 
@@ -284,7 +305,9 @@ def api_state():
             "csv_info": csv_info,
             "wins": wins,
             "losses": losses,
-            "win_rate": win_rate
+            "win_rate": win_rate,
+            "max_win_streak": max_win_streak,
+            "max_loss_streak": max_loss_streak
         })
 
 
