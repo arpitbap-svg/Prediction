@@ -1,582 +1,321 @@
-import os, json, time, threading, logging, csv, io
-from datetime import datetime, timezone
-from collections import Counter
+import csv
+import io
+import json
+import os
+import threading
+import time
+from datetime import datetime, timezone, timedelta
 import requests
-from flask import Flask, jsonify, send_from_directory, Response, request
-from sqlalchemy import create_engine, text, inspect
+from flask import Flask, jsonify, render_template, request
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
-app = Flask(__name__, static_folder='static')
-API_BASE = 'https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json?pageSize=10&pageNo={page}'
-POLL_SECONDS = max(3, int(os.getenv('POLL_SECONDS', '3')))
-API_CONNECT_TIMEOUT = max(2, float(os.getenv('API_CONNECT_TIMEOUT', '4')))
-API_READ_TIMEOUT = max(3, float(os.getenv('API_READ_TIMEOUT', '7')))
-API_RETRIES = max(1, min(5, int(os.getenv('API_RETRIES', '3'))))
-collector_status = {'last_success': None, 'last_attempt': None, 'last_error': None, 'consecutive_failures': 0, 'last_rows': 0}
-collector_status_lock = threading.Lock()
-cycle_lock = threading.Lock()
-DB_URL = os.getenv('DATABASE_URL', '').strip()
-if DB_URL.startswith('postgres://'):
-    DB_URL = DB_URL.replace('postgres://', 'postgresql+psycopg2://', 1)
-elif DB_URL.startswith('postgresql://'):
-    DB_URL = DB_URL.replace('postgresql://', 'postgresql+psycopg2://', 1)
-if not DB_URL:
-    DB_URL = 'sqlite:///wingo_local.db'
-engine = create_engine(DB_URL, pool_pre_ping=True, future=True)
+app = Flask(__name__)
 
-with open(os.path.join(os.path.dirname(__file__), 'methods.json'), encoding='utf-8') as f:
-    METHODS = json.load(f)
+API_URL = "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json"
+HISTORY_FILE = "prediction_history.json"
+STATS_FILE = "saved_pair_stats.json"
+IST = timezone(timedelta(hours=5, minutes=30))
 
+# Default 16,906 valid CSV records (fallback agar koi nayi CSV upload na ho)
+DEFAULT_PAIR_STATS = {
+    "0-0":{"big":85,"small":102},"0-1":{"big":80,"small":94},"0-2":{"big":100,"small":84},"0-3":{"big":73,"small":85},"0-4":{"big":81,"small":80},
+    "0-5":{"big":87,"small":88},"0-6":{"big":75,"small":91},"0-7":{"big":95,"small":77},"0-8":{"big":97,"small":89},"0-9":{"big":80,"small":84},
+    "1-0":{"big":92,"small":101},"1-1":{"big":92,"small":86},"1-2":{"big":96,"small":98},"1-3":{"big":84,"small":82},"1-4":{"big":88,"small":74},
+    "1-5":{"big":84,"small":81},"1-6":{"big":91,"small":89},"1-7":{"big":94,"small":80},"1-8":{"big":99,"small":73},"1-9":{"big":85,"small":91},
+    "2-0":{"big":85,"small":78},"2-1":{"big":89,"small":80},"2-2":{"big":83,"small":84},"2-3":{"big":97,"small":80},"2-4":{"big":72,"small":79},
+    "2-5":{"big":95,"small":86},"2-6":{"big":66,"small":103},"2-7":{"big":87,"small":99},"2-8":{"big":79,"small":78},"2-9":{"big":85,"small":85},
+    "3-0":{"big":78,"small":83},"3-1":{"big":74,"small":72},"3-2":{"big":80,"small":87},"3-3":{"big":92,"small":61},"3-4":{"big":79,"small":74},
+    "3-5":{"big":73,"small":93},"3-6":{"big":73,"small":108},"3-7":{"big":63,"small":97},"3-8":{"big":84,"small":102},"3-9":{"big":74,"small":75},
+    "4-0":{"big":79,"small":90},"4-1":{"big":62,"small":83},"4-2":{"big":85,"small":75},"4-3":{"big":105,"small":82},"4-4":{"big":77,"small":73},
+    "4-5":{"big":84,"small":80},"4-6":{"big":80,"small":79},"4-7":{"big":72,"small":84},"4-8":{"big":80,"small":93},"4-9":{"big":87,"small":93},
+    "5-0":{"big":76,"small":81},"5-1":{"big":96,"small":97},"5-2":{"big":90,"small":70},"5-3":{"big":74,"small":77},"5-4":{"big":79,"small":83},
+    "5-5":{"big":85,"small":75},"5-6":{"big":105,"small":82},"5-7":{"big":84,"small":82},"5-8":{"big":90,"small":91},"5-9":{"big":81,"small":94},
+    "6-0":{"big":90,"small":85},"6-1":{"big":105,"small":98},"6-2":{"big":73,"small":75},"6-3":{"big":60,"small":82},"6-4":{"big":84,"small":103},
+    "6-5":{"big":88,"small":84},"6-6":{"big":70,"small":82},"6-7":{"big":81,"small":87},"6-8":{"big":86,"small":79},"6-9":{"big":81,"small":71},
+    "7-0":{"big":90,"small":65},"7-1":{"big":98,"small":102},"7-2":{"big":86,"small":96},"7-3":{"big":86,"small":72},"7-4":{"big":99,"small":81},
+    "7-5":{"big":93,"small":69},"7-6":{"big":90,"small":65},"7-7":{"big":80,"small":78},"7-8":{"big":83,"small":85},"7-9":{"big":86,"small":80},
+    "8-0":{"big":105,"small":97},"8-1":{"big":79,"small":91},"8-2":{"big":86,"small":79},"8-3":{"big":86,"small":79},"8-4":{"big":93,"small":79},
+    "8-5":{"big":90,"small":90},"8-6":{"big":75,"small":75},"8-7":{"big":84,"small":101},"8-8":{"big":85,"small":89},"8-9":{"big":95,"small":77},
+    "9-0":{"big":83,"small":82},"9-1":{"big":92,"small":90},"9-2":{"big":84,"small":79},"9-3":{"big":85,"small":80},"9-4":{"big":80,"small":85},
+    "9-5":{"big":90,"small":78},"9-6":{"big":84,"small":81},"9-7":{"big":69,"small":90},"9-8":{"big":78,"small":95},"9-9":{"big":93,"small":89}
+}
 
-def init_db():
-    with engine.begin() as c:
-        c.execute(text('''CREATE TABLE IF NOT EXISTS results (
-            issue VARCHAR(80) PRIMARY KEY, number INTEGER NOT NULL, size VARCHAR(10) NOT NULL,
-            colour VARCHAR(10) NOT NULL, draw_time VARCHAR(80), saved_at VARCHAR(40) NOT NULL
-        )'''))
-        c.execute(text('''CREATE TABLE IF NOT EXISTS logic_settings (
-            logic_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL
-        )'''))
-        c.execute(text('''CREATE TABLE IF NOT EXISTS active_logic_state (
-            slot INTEGER PRIMARY KEY, logic_id INTEGER NOT NULL, start_result VARCHAR(10)
-        )'''))
-        c.execute(text('''CREATE TABLE IF NOT EXISTS prediction_cooldown (
-            slot INTEGER PRIMARY KEY, checkpoint_issue VARCHAR(80) NOT NULL
-        )'''))
-        state_cols = {col['name'] for col in inspect(engine).get_columns('active_logic_state')}
-        if 'start_result' not in state_cols:
-            c.execute(text('ALTER TABLE active_logic_state ADD COLUMN start_result VARCHAR(10)'))
-        c.execute(text('''CREATE TABLE IF NOT EXISTS predictions (
-            target_issue VARCHAR(80) PRIMARY KEY, prediction VARCHAR(10) NOT NULL,
-            actual VARCHAR(10), actual_number INTEGER, result VARCHAR(10) NOT NULL,
-            saved_at VARCHAR(40) NOT NULL, colour VARCHAR(10), number_pick INTEGER,
-            consensus INTEGER, logic_name VARCHAR(200), logic_accuracy INTEGER
-        )'''))
-        # Backward-compatible migration for existing SQLite/Postgres databases.
-        existing = {col['name'] for col in inspect(engine).get_columns('predictions')}
-        if 'logic_name' not in existing:
-            c.execute(text('ALTER TABLE predictions ADD COLUMN logic_name VARCHAR(200)'))
-        if 'logic_accuracy' not in existing:
-            c.execute(text('ALTER TABLE predictions ADD COLUMN logic_accuracy INTEGER'))
+state_lock = threading.Lock()
 
+pair_stats = DEFAULT_PAIR_STATS.copy()
+csv_info = {
+    "filename": "Default Embedded CSV",
+    "valid_records": 16906,
+    "saved_at": "Built-in"
+}
 
-def size_of(n): return 'BIG' if int(n) >= 5 else 'SMALL'
-def colour_of(n, api_color=None):
-    c = str(api_color or '').upper()
-    if 'GREEN' in c: return 'GREEN'
-    if 'RED' in c: return 'RED'
-    if 'VIOLET' in c and int(n) == 0: return 'VIOLET'
-    return 'GREEN' if int(n) in (1,3,7,9) else ('RED' if int(n) in (0,2,4,6,8) else 'GREEN')
+state = {
+    "status": "Starting...",
+    "last_updated": None,
+    "latest_period": None,
+    "next_period": None,
+    "pair": None,
+    "prediction": None,
+    "big_votes": 0,
+    "small_votes": 0,
+    "total_matches": 0,
+    "big_pct": 0.0,
+    "small_pct": 0.0,
+    "history": []
+}
 
 
-def normalise_api(raw):
-    data = raw.get('data') if isinstance(raw, dict) else {}
-    if not isinstance(data, dict): data = {}
-    items = data.get('list') or raw.get('list') or data.get('records') or raw.get('records') or []
-    out=[]
-    for x in items:
+def load_saved_stats():
+    global pair_stats, csv_info
+    if os.path.exists(STATS_FILE):
         try:
-            n=int(x.get('number', x.get('Number', x.get('openNumber'))))
-            if n < 0 or n > 9: continue
-            issue=str(x.get('issueNumber', x.get('issue', x.get('period', ''))))
-            if not issue: continue
-            size_raw=str(x.get('size') or '').upper()
-            size='BIG' if ('BIG' in size_raw or size_raw == 'B') else ('SMALL' if ('SMALL' in size_raw or size_raw == 'S') else size_of(n))
-            out.append({'issue':issue,'number':n,'size':size,'colour':colour_of(n,x.get('colour',x.get('color'))),'time':str(x.get('time',x.get('openTime',x.get('createTime',''))) or '')})
-        except (TypeError, ValueError):
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                if "pair_stats" in saved and "csv_info" in saved:
+                    pair_stats = saved["pair_stats"]
+                    csv_info = saved["csv_info"]
+        except Exception:
+            pass
+
+
+def save_stats_to_disk(new_stats, new_info):
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"pair_stats": new_stats, "csv_info": new_info}, f)
+
+
+def parse_csv_content(text):
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV file khali hai ya headers nahi mile.")
+
+    # Column names flexibly match karein
+    headers = {h.strip().lower(): h for h in reader.fieldnames}
+    num_col = headers.get("actual number") or headers.get("number")
+    res_col = headers.get("actual result") or headers.get("result")
+
+    if not num_col:
+        raise ValueError("CSV mein 'Actual Number' ya 'Number' column hona zaroori hai.")
+
+    nums = []
+    results = []
+
+    for row in reader:
+        raw_num = (row.get(num_col) or "").strip()
+        if not raw_num:
             continue
-    out.sort(key=lambda r: int(r['issue']) if r['issue'].isdigit() else r['issue'], reverse=True)
-    return out
-
-
-def majority(values):
-    b=sum(1 for x in values if x=='BIG')
-    return 'BIG' if b >= len(values)/2 else 'SMALL'
-def current_streak(data, key):
-    if not data: return 0
-    v=data[0][key]; n=0
-    for x in data:
-        if x[key] != v: break
-        n += 1
-    return n
-def entropy(vals):
-    counts=Counter(vals); total=len(vals)
-    return sum(-(v/total)*__import__('math').log2(v/total) for v in counts.values()) if total else 0
-def next_from_sequence(seq, order):
-    if len(seq) <= order: return None
-    key=seq[:order]; found=[]
-    for i in range(order,len(seq)):
-        if seq[i-order:i] == key: found.append(seq[i-order-1])
-    return majority(found) if len(found)>=2 else None
-
-
-def run_single_method(method, data):
-    if not data: return 'BIG'
-    nums=[x['number'] for x in data]; sizes=[x['size'] for x in data]
-    latest=sizes[0] if sizes else 'BIG'; i=method['id']-1
-    fam=method['family']; variant=i%11
-    win=min(len(data),[8,10,12,15,20,25,30,40,50,75,100][variant])
-    s=sizes[:win]; n=nums[:win]
-    big=s.count('BIG'); ratio=big/(len(s) or 1); streak=current_streak(data,'size')
-    if fam=='Markov Chains':
-        order=1+(variant%4); seq=list(reversed(s[:min(500,len(s))]))
-        return next_from_sequence(seq,order) or ('BIG' if ratio>=.5 else 'SMALL')
-    if fam=='Moving Averages & Momentum':
-        short=s[:min(5+variant*2,len(s))]; mid=s[:min(15+variant*3,len(s))]; long=s
-        score=((short.count('BIG')/(len(short) or 1)-.5)*.5 + (mid.count('BIG')/(len(mid) or 1)-.5)*.3 + (long.count('BIG')/(len(long) or 1)-.5)*.2)
-        return 'BIG' if score>=0 else 'SMALL'
-    if fam=='Mean Reversion & Liability':
-        edge=abs(ratio-.5); pred='SMALL' if ratio>.5 else 'BIG'
-        if edge<.04: pred='SMALL' if latest=='BIG' else 'BIG'
-        return pred
-    if fam in ('Streak Dynamics','Dynamic Streak Pivot'):
-        continue_trend=streak>=2+(variant%4)
-        pred=latest if continue_trend else ('SMALL' if latest=='BIG' else 'BIG')
-        if fam=='Dynamic Streak Pivot' and streak>=4: pred='SMALL' if latest=='BIG' else 'BIG'
-        return pred
-    if fam=='Temporal & Modulo Logic':
-        issue=str(data[0].get('issue') or '0'); mod=[3,5,7,10,11,13][variant%6]
-        v=int(issue[-4:]) if issue[-4:].isdigit() else 0
-        return 'BIG' if ((v%mod)+variant)%2==0 else 'SMALL'
-    if fam=='Digit Topology':
-        counts=[n.count(x) for x in range(10)]
-        hot=counts.index(max(counts)); cold=counts.index(min(counts)); pick=hot if variant%2 else cold
-        return 'BIG' if pick>=5 else 'SMALL'
-    if fam=='Quantum Entropy':
-        return ('SMALL' if latest=='BIG' else 'BIG') if entropy(s)>.95 else majority(s)
-    if fam=='Bayesian Posterior':
-        alpha=1+big; beta=1+(len(s)-big)
-        return 'BIG' if alpha/(alpha+beta)>=.5 else 'SMALL'
-    if fam=='N-Gram Memory & Spectral':
-        order=2+(variant%4); seq=list(reversed(s[:min(500,len(s))]))
-        return next_from_sequence(seq,order) or (majority(s) if variant%2 else ('SMALL' if latest=='BIG' else 'BIG'))
-    return majority(s)
-
-
-def calculate_accuracy(method, data):
-    # Accuracy on the 100 most recent completed periods.
-    correct = evaluated = 0
-    for step in range(1, min(101, len(data))):
-        if run_single_method(method, data[step:]) == data[step - 1]['size']:
-            correct += 1
-        evaluated += 1
-    return round(correct / evaluated * 100) if evaluated else 0
-
-
-def get_enabled_methods():
-    with engine.connect() as c:
-        disabled = {int(r['logic_id']) for r in c.execute(text('SELECT logic_id FROM logic_settings WHERE enabled=0')).mappings().all()}
-    return [m for m in METHODS if int(m['id']) not in disabled]
-
-
-def get_active_logic_id():
-    with engine.connect() as c:
-        row = c.execute(text('SELECT logic_id FROM active_logic_state WHERE slot=1')).first()
-    return int(row[0]) if row else None
-
-
-def get_active_start_result():
-    with engine.connect() as c:
-        row = c.execute(text('SELECT start_result FROM active_logic_state WHERE slot=1')).first()
-    return row[0] if row else None
-
-
-def set_active_logic_id(logic_id, reset_start=True):
-    with engine.begin() as c:
-        c.execute(text('''INSERT INTO active_logic_state(slot,logic_id,start_result) VALUES(1,:id,NULL)
-            ON CONFLICT(slot) DO UPDATE SET logic_id=excluded.logic_id,
-            start_result=CASE WHEN :reset_start=1 THEN NULL ELSE active_logic_state.start_result END'''),
-            {'id': int(logic_id), 'reset_start': 1 if reset_start else 0})
-
-
-def set_active_start_result(result):
-    with engine.begin() as c:
-        c.execute(text('UPDATE active_logic_state SET start_result=:result WHERE slot=1'), {'result': result})
-
-
-def choose_lowest_accuracy_logic(data, active_methods):
-    if not active_methods:
-        return None
-    ranked = [{**method, 'accuracy': calculate_accuracy(method, data)} for method in active_methods]
-    return min(ranked, key=lambda item: (item['accuracy'], item['id']))
-
-
-def make_prediction(data, selected_method=None):
-    # 100 completed periods plus the current latest result are required.
-    if len(data) < 101:
-        return None
-    active_methods = get_enabled_methods()
-    if not active_methods:
-        return None
-    if selected_method is None:
-        selected_method = choose_lowest_accuracy_logic(data, active_methods)
-    if selected_method is None:
-        return None
-    # The active logic stays locked until the first result opposite to its first settled result.
-    best = {**selected_method, 'accuracy': calculate_accuracy(selected_method, data)}
-    size = run_single_method(best, data)
-    freq = [0] * 10
-    for row in data[:100]:
-        freq[row['number']] += 1
-    recent_colours = [row['colour'] for row in data[:20]]
-    green = sum(1 for colour in recent_colours if colour == 'GREEN')
-    colour = 'GREEN' if green >= len(recent_colours) / 2 else 'RED'
-    candidates = [n for n in range(10) if size_of(n) == size and colour_of(n) == colour]
-    if not candidates:
-        candidates = [n for n in range(10) if size_of(n) == size]
-    number_pick = sorted(candidates, key=lambda n: freq[n], reverse=True)[0] if candidates else (7 if size == 'BIG' else 2)
-    issue = str(data[0]['issue'])
-    next_issue = str(int(issue) + 1) if issue.isdigit() else '--'
-    return {
-        'size': size, 'colour': colour, 'number': number_pick, 'nextIssue': next_issue,
-        'consensus': best['accuracy'], 'bigVotes': 1 if size == 'BIG' else 0,
-        'smallVotes': 1 if size == 'SMALL' else 0, 'activeMethods': 1,
-        'useAccuracyMode': True, 'topAccuracy': best['accuracy'],
-        'votingRule': 'lock_until_opposite_of_first_result_then_lowest_accuracy_last_100', 'votingMethods': [best['name']],
-        'logicId': best['id'], 'logicName': best['name'], 'logicAccuracy': best['accuracy'],
-        'votingMethodDetails': [{'id': best['id'], 'name': best['name'],
-                                 'accuracy': best['accuracy'], 'prediction': size}]
-    }
-
-
-def db_rows(limit=1500):
-    # Period IDs are fixed-width numeric strings in this feed, so descending SQL order
-    # lets the collector read only the recent window instead of loading the full DB each cycle.
-    with engine.connect() as c:
-        if limit is None:
-            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results')).mappings().all()
-        else:
-            rows=c.execute(text('SELECT issue, number, size, colour, draw_time FROM results ORDER BY issue DESC LIMIT :lim'), {'lim': int(limit)}).mappings().all()
-    out=[{'issue':r['issue'],'number':r['number'],'size':r['size'],'colour':r['colour'],'time':r['draw_time'] or ''} for r in rows]
-    out.sort(key=lambda r: int(r['issue']) if str(r['issue']).isdigit() else str(r['issue']), reverse=True)
-    return out if limit is None else out[:limit]
-
-
-def fetch_latest_api_items():
-    headers={'Accept':'application/json','User-Agent':'Mozilla/5.0 (compatible; WinGoHistoryCollector/2.0)','Connection':'close'}
-    last_error = None
-    for attempt in range(API_RETRIES):
         try:
-            response=requests.get(API_BASE.format(page=1), timeout=(API_CONNECT_TIMEOUT, API_READ_TIMEOUT), headers=headers)
-            response.raise_for_status()
-            items=normalise_api(response.json())
-            if not items:
-                raise RuntimeError('API response did not contain valid result rows')
-            return items
-        except Exception as exc:
-            last_error = exc
-            logging.warning('Upstream API attempt %s/%s failed: %s', attempt + 1, API_RETRIES, exc)
-            if attempt + 1 < API_RETRIES:
-                time.sleep(min(2 ** attempt, 4))
-    raise RuntimeError(f'Upstream API unavailable after {API_RETRIES} attempts: {last_error}')
+            n = int(float(raw_num))
+            if not (0 <= n <= 9):
+                continue
+        except ValueError:
+            continue
+
+        if res_col and (row.get(res_col) or "").strip():
+            r = row[res_col].strip().upper()
+            if r not in ("BIG", "SMALL"):
+                r = "BIG" if n >= 5 else "SMALL"
+        else:
+            r = "BIG" if n >= 5 else "SMALL"
+
+        nums.append(n)
+        results.append(r)
+
+    if len(nums) < 3:
+        raise ValueError("CSV mein kam se kam 3 valid records hone chahiye.")
+
+    new_stats = {f"{d1}-{d2}": {"big": 0, "small": 0} for d1 in range(10) for d2 in range(10)}
+    for i in range(len(nums) - 2):
+        key = f"{nums[i]}-{nums[i+1]}"
+        if results[i + 2] == "BIG":
+            new_stats[key]["big"] += 1
+        else:
+            new_stats[key]["small"] += 1
+
+    return new_stats, len(nums)
 
 
-def persist_batch(items):
-    now=datetime.now(timezone.utc).isoformat()
-    with engine.begin() as c:
-        for r in items:
-            c.execute(text('''INSERT INTO results(issue,number,size,colour,draw_time,saved_at)
-                VALUES(:issue,:number,:size,:colour,:time,:saved)
-                ON CONFLICT(issue) DO UPDATE SET number=excluded.number,size=excluded.size,colour=excluded.colour,draw_time=excluded.draw_time'''),
-                {'issue':r['issue'],'number':r['number'],'size':r['size'],'colour':r['colour'],'time':r['time'],'saved':now})
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
 
 
+def save_history(history):
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history[:200], f)
+    except Exception:
+        pass
 
-def process_cycle():
-    # Never let two collector cycles overlap (e.g. after a slow upstream response).
-    if not cycle_lock.acquire(blocking=False):
-        logging.warning('Collector cycle skipped: previous cycle is still running')
+
+def get_size(num):
+    return "BIG" if int(num) >= 5 else "SMALL"
+
+
+def process_api_data(draw_list):
+    if not draw_list or len(draw_list) < 2:
         return
-    try:
-        with collector_status_lock:
-            collector_status['last_attempt'] = datetime.now(timezone.utc).isoformat()
-        items = fetch_latest_api_items()
-        persist_batch(items)
-        with collector_status_lock:
-            collector_status['last_success'] = datetime.now(timezone.utc).isoformat()
-            collector_status['last_error'] = None
-            collector_status['consecutive_failures'] = 0
-            collector_status['last_rows'] = len(items)
-        rows=db_rows(1500)
-        actual_map={r['issue']:r for r in rows}
-        now=datetime.now(timezone.utc).isoformat()
-        # Always settle older predictions first, even while waiting for enough accuracy data.
-        newly_lost = False
-        with engine.begin() as c:
-            pending=c.execute(text("SELECT target_issue,prediction,logic_name FROM predictions WHERE result='PENDING'")).mappings().all()
-            settled_events = []
-            for old in pending:
-                actual=actual_map.get(old['target_issue'])
-                if actual:
-                    result='WIN' if old['prediction']==actual['size'] else 'LOSS'
-                    c.execute(text("UPDATE predictions SET actual=:a,actual_number=:n,result=:r WHERE target_issue=:i"),
-                        {'a':actual['size'],'n':actual['number'],'r':result,'i':old['target_issue']})
-                    settled_events.append({'result': result, 'logic_name': old['logic_name']})
 
-        # Auto-disable any logic whose own settled prediction results reach
-        # more than five consecutive WINs or more than five consecutive LOSSes.
-        # The user's requested reset scope is the ENTIRE website prediction history.
-        auto_disabled = []
-        with engine.begin() as c:
-            for method in METHODS:
-                recent = c.execute(text('''SELECT result FROM predictions
-                    WHERE logic_name=:name AND result IN ('WIN','LOSS')
-                    ORDER BY target_issue DESC LIMIT 6'''), {'name': method['name']}).scalars().all()
-                if len(recent) == 6 and len(set(recent)) == 1:
-                    logic_id = int(method['id'])
-                    c.execute(text('''INSERT INTO logic_settings(logic_id,enabled) VALUES(:id,0)
-                        ON CONFLICT(logic_id) DO UPDATE SET enabled=0'''), {'id': logic_id})
-                    auto_disabled.append(method['name'])
-            if auto_disabled:
-                # Match the Clear Prediction History button: clear generated predictions
-                # and active selection/lock state, but preserve actual WinGo draw results.
-                # The same cycle will immediately re-rank enabled logics on recent draw data.
-                c.execute(text('DELETE FROM predictions'))
-                c.execute(text('DELETE FROM active_logic_state'))
-                c.execute(text('DELETE FROM prediction_cooldown'))
-        if auto_disabled:
-            logging.warning('Auto-disabled logic after 6-result streak; prediction history and streak counters reset; reselecting immediately from recent 100 periods: %s', ', '.join(auto_disabled))
-            # Do not return: continue this collector cycle and create the next prediction
-            # using the best eligible logic among those still enabled.
+    latest_item = draw_list[0]
+    prev_item = draw_list[1]
 
-        active_methods = get_enabled_methods()
-        if not active_methods:
-            logging.info('Collector cycle: all logics disabled')
-            return
-        active_ids = {int(m['id']) for m in active_methods}
-        selected_id = get_active_logic_id()
-        # Lock rule: remember the first settled outcome for the selected logic.
-        # Re-select only when that logic later gets the opposite outcome.
-        active_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
-        active_name = active_method['name'] if active_method else None
-        start_result = get_active_start_result()
-        switch_now = selected_id not in active_ids
-        if not switch_now and active_name:
-            for event in settled_events:
-                if event['logic_name'] != active_name:
-                    continue
-                if start_result is None:
-                    start_result = event['result']
-                    set_active_start_result(start_result)
-                elif event['result'] != start_result:
-                    switch_now = True
-                    break
-        if switch_now:
-            selected = choose_lowest_accuracy_logic(rows, active_methods) if len(rows) >= 101 else None
-            if selected:
-                selected_id = int(selected['id'])
-                set_active_logic_id(selected_id, reset_start=True)
-        selected_method = next((m for m in active_methods if int(m['id']) == selected_id), None)
-        p=make_prediction(rows, selected_method)
-        if not p or p['nextIssue']=='--':
-            reason = 'all logics disabled' if not get_enabled_methods() else 'waiting for 101 records'
-            logging.info('Collector cycle: fetched=%s latest=%s; %s',len(items),items[0]['issue'],reason)
-            return
-        with engine.begin() as c:
-            c.execute(text('''INSERT INTO predictions(target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy)
-                VALUES(:issue,:prediction,NULL,NULL,'PENDING',:saved,:colour,:number,:consensus,:logic_name,:logic_accuracy)
-                ON CONFLICT(target_issue) DO UPDATE SET prediction=excluded.prediction,actual=NULL,actual_number=NULL,result='PENDING',saved_at=excluded.saved_at,colour=excluded.colour,number_pick=excluded.number_pick,consensus=excluded.consensus,logic_name=excluded.logic_name,logic_accuracy=excluded.logic_accuracy WHERE predictions.result='PENDING' '''),
-                {'issue':p['nextIssue'],'prediction':p['size'],'saved':now,'colour':p['colour'],'number':p['number'],'consensus':p['consensus'],'logic_name':p['logicName'],'logic_accuracy':p['logicAccuracy']})
-        logging.info('Collector cycle: fetched=%s latest=%s next_prediction=%s %s selected_logic=%s accuracy=%s switched_after_opposite_result=%s',
-            len(items),items[0]['issue'],p['nextIssue'],p['size'],p['logicName'],p['logicAccuracy'],switch_now)
-    finally:
-        cycle_lock.release()
+    latest_period = str(latest_item["issueNumber"])
+    latest_num = int(latest_item["number"])
+    prev_num = int(prev_item["number"])
 
-def collector_loop():
-    # One initial cycle, then every 3 seconds by default. A platform restart resets this timer.
+    result_map = {str(item["issueNumber"]): int(item["number"]) for item in draw_list}
+    next_period = str(int(latest_period) + 1)
+    pair_key = f"{prev_num}-{latest_num}"
+    now_str = datetime.now(IST).strftime("%I:%M:%S %p")
+
+    with state_lock:
+        votes = pair_stats.get(pair_key, {"big": 0, "small": 0})
+        big_v = votes["big"]
+        small_v = votes["small"]
+        total = big_v + small_v
+        big_pct = round((big_v / total) * 100, 1) if total > 0 else 50.0
+        small_pct = round((small_v / total) * 100, 1) if total > 0 else 50.0
+        pred = "BIG" if big_v >= small_v else "SMALL"
+
+        # 1. Pending predictions ka WIN/LOSS check karein
+        changed = False
+        for row in state["history"]:
+            if row["status"] == "PENDING" and row["period"] in result_map:
+                actual_num = result_map[row["period"]]
+                actual_size = get_size(actual_num)
+                row["actual_num"] = actual_num
+                row["actual_size"] = actual_size
+                row["status"] = "WIN" if row["prediction"] == actual_size else "LOSS"
+                changed = True
+
+        # 2. Naye next_period ki prediction add karein
+        existing_periods = {row["period"] for row in state["history"]}
+        if next_period not in existing_periods:
+            state["history"].insert(0, {
+                "period": next_period,
+                "pair": f"{prev_num} → {latest_num}",
+                "prediction": pred,
+                "actual_num": None,
+                "actual_size": None,
+                "status": "PENDING",
+                "time": now_str
+            })
+            state["history"] = state["history"][:200]
+            changed = True
+
+        if changed:
+            save_history(state["history"])
+
+        # 3. Current state update karein
+        state["status"] = "Live"
+        state["last_updated"] = now_str
+        state["latest_period"] = latest_period
+        state["next_period"] = next_period
+        state["pair"] = [prev_num, latest_num]
+        state["prediction"] = pred
+        state["big_votes"] = big_v
+        state["small_votes"] = small_v
+        state["total_matches"] = total
+        state["big_pct"] = big_pct
+        state["small_pct"] = small_pct
+
+
+def background_worker():
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     while True:
-        started=time.time()
         try:
-            process_cycle()
-        except Exception as exc:
-            logging.exception('Collector error: %s',exc)
-            with collector_status_lock:
-                collector_status['last_error'] = str(exc)[:500]
-                collector_status['consecutive_failures'] += 1
-        with collector_status_lock:
-            failures = collector_status['consecutive_failures']
-        target_delay = min(POLL_SECONDS * (2 ** min(failures, 4)), 30) if failures else POLL_SECONDS
-        time.sleep(max(1, target_delay-(time.time()-started)))
+            resp = requests.get(f"{API_URL}?ts={int(time.time() * 1000)}", headers=headers, timeout=8)
+            if resp.status_code == 200:
+                draw_list = resp.json().get("data", {}).get("list", [])
+                if draw_list:
+                    process_api_data(draw_list)
+                else:
+                    with state_lock:
+                        state["status"] = "API Empty"
+            else:
+                with state_lock:
+                    state["status"] = f"API Error ({resp.status_code})"
+        except Exception:
+            with state_lock:
+                state["status"] = "Reconnecting..."
+        time.sleep(3)
 
 
-@app.after_request
-def add_api_headers(response):
-    if request.path.startswith('/api/'):
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
-        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    return response
+# Startup initialization
+load_saved_stats()
+state["history"] = load_history()
+threading.Thread(target=background_worker, daemon=True).start()
 
 
-@app.get('/')
-def home(): return send_from_directory('static','index.html')
-
-@app.get('/api/logics')
-def get_logics():
-    enabled_ids = {int(m['id']) for m in get_enabled_methods()}
-    return jsonify({'logics': [{'id': int(m['id']), 'name': m['name'], 'family': m['family'], 'enabled': int(m['id']) in enabled_ids} for m in METHODS], 'enabledCount': len(enabled_ids), 'totalCount': len(METHODS)})
+@app.route("/")
+def index():
+    return render_template("index.html")
 
 
-@app.post('/api/logics/toggle')
-def toggle_logic():
-    payload = request.get_json(silent=True) or {}
+@app.route("/api/state")
+def api_state():
+    with state_lock:
+        wins = sum(1 for r in state["history"] if r["status"] == "WIN")
+        losses = sum(1 for r in state["history"] if r["status"] == "LOSS")
+        total_settled = wins + losses
+        win_rate = round((wins / total_settled) * 100, 1) if total_settled > 0 else 0.0
+
+        return jsonify({
+            **state,
+            "csv_info": csv_info,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate
+        })
+
+
+@app.route("/api/upload-csv", methods=["POST"])
+def upload_csv():
+    global pair_stats, csv_info
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "Koi CSV file select nahi ki gayi."}), 400
+
+    file = request.files["file"]
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        return jsonify({"ok": False, "error": "Sirf .csv file upload karein."}), 400
+
     try:
-        logic_id = int(payload.get('id'))
-    except (TypeError, ValueError):
-        return jsonify({'ok': False, 'error': 'Valid logic ID is required'}), 400
-    if logic_id not in {int(m['id']) for m in METHODS}:
-        return jsonify({'ok': False, 'error': 'Unknown logic ID'}), 404
-    enabled = bool(payload.get('enabled'))
-    with engine.begin() as c:
-        c.execute(text('INSERT INTO logic_settings(logic_id,enabled) VALUES(:id,:enabled) ON CONFLICT(logic_id) DO UPDATE SET enabled=excluded.enabled'), {'id': logic_id, 'enabled': 1 if enabled else 0})
-    return jsonify({'ok': True, 'id': logic_id, 'enabled': enabled, 'enabledCount': len(get_enabled_methods())})
+        content = file.read().decode("utf-8-sig", errors="ignore")
+        new_stats, valid_count = parse_csv_content(content)
+        new_info = {
+            "filename": file.filename,
+            "valid_records": valid_count,
+            "saved_at": datetime.now(IST).strftime("%d %b, %I:%M %p")
+        }
+
+        with state_lock:
+            pair_stats = new_stats
+            csv_info = new_info
+            save_stats_to_disk(new_stats, new_info)
+
+        return jsonify({"ok": True, "csv_info": new_info})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
-@app.post('/api/logics/bulk')
-def bulk_toggle_logics():
-    payload = request.get_json(silent=True) or {}
-    enabled = bool(payload.get('enabled'))
-    with engine.begin() as c:
-        if enabled:
-            c.execute(text('DELETE FROM logic_settings'))
-        else:
-            c.execute(text('INSERT INTO logic_settings(logic_id,enabled) VALUES(:id,0) ON CONFLICT(logic_id) DO UPDATE SET enabled=0'), [{'id': int(m['id'])} for m in METHODS])
-    return jsonify({'ok': True, 'enabled': enabled, 'enabledCount': len(get_enabled_methods())})
+@app.route("/api/clear", methods=["POST"])
+def api_clear():
+    with state_lock:
+        state["history"] = []
+        save_history([])
+    return jsonify({"ok": True})
 
 
-@app.get('/health')
+@app.route("/health")
 def health():
-    with collector_status_lock:
-        status = dict(collector_status)
-    return jsonify({'ok':True,'service':'wingo-collector','poll_seconds':POLL_SECONDS,
-                    'upstream':'LIVE' if status['last_success'] and not status['last_error'] else 'WAITING_OR_ERROR',
-                    'collector':status})
-
-@app.get('/api/state')
-def state():
-    rows=db_rows(1500)
-    with engine.connect() as c:
-        preds=c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,consensus,logic_name,logic_accuracy
-            FROM predictions ORDER BY target_issue DESC LIMIT 1000''')).mappings().all()
-        total=c.execute(text('SELECT COUNT(*) FROM results')).scalar_one()
-    predictions=[{'targetIssue':r['target_issue'],'prediction':r['prediction'],'actual':r['actual'] or '--','actualNumber':r['actual_number'],'result':r['result'],'savedAt':r['saved_at'],'colour':r['colour'],'number':r['number_pick'],'consensus':r['consensus'],'logicName':r['logic_name'] or '--','logicAccuracy':r['logic_accuracy']} for r in preds]
-    predictions.sort(key=lambda p: int(p['targetIssue']) if str(p['targetIssue']).isdigit() else str(p['targetIssue']), reverse=True)
-    # Serve the prediction already calculated by the background collector.
-    # Do not rerun all 108 logic evaluations on every dashboard refresh.
-    latest = rows[0] if rows else None
-    latest_issue_num = int(latest['issue']) if latest and str(latest['issue']).isdigit() else None
-    latest_prediction = next((p for p in predictions if p['result'] == 'PENDING' and
-                              (latest_issue_num is None or not str(p['targetIssue']).isdigit() or int(p['targetIssue']) > latest_issue_num)), None)
-    current_engine = None
-    if latest_prediction:
-        current_engine = {
-            'size': latest_prediction['prediction'],
-            'colour': latest_prediction['colour'],
-            'number': latest_prediction['number'],
-            'nextIssue': latest_prediction['targetIssue'],
-            'consensus': latest_prediction['consensus'] or 0,
-            'bigVotes': 1 if latest_prediction['prediction'] == 'BIG' else 0,
-            'smallVotes': 1 if latest_prediction['prediction'] == 'SMALL' else 0,
-            'activeMethods': 1, 'useAccuracyMode': True,
-            'topAccuracy': latest_prediction['logicAccuracy'] or 0,
-            'votingRule': 'lock_until_opposite_of_first_result_then_lowest_accuracy_last_100',
-            'votingMethods': [latest_prediction['logicName']],
-            'logicName': latest_prediction['logicName'],
-            'logicAccuracy': latest_prediction['logicAccuracy'],
-            'votingMethodDetails': [{
-                'name': latest_prediction['logicName'],
-                'accuracy': latest_prediction['logicAccuracy'] or 0,
-                'prediction': latest_prediction['prediction']
-            }]
-        }
-    # API History must show only the latest 10 actual records returned by the API.
-    api_history = rows[:10]
-    settled=[p for p in predictions if p['result'] in ('WIN','LOSS')]
-    wins=sum(1 for p in settled if p['result']=='WIN')
-    with collector_status_lock:
-        collector = dict(collector_status)
-    with engine.connect() as c:
-        cooldown = c.execute(text('SELECT checkpoint_issue FROM prediction_cooldown WHERE slot=1')).first()
-    cooldown_info = None
-    if cooldown:
-        checkpoint_issue = str(cooldown[0])
-        def newer_than_checkpoint(issue):
-            try: return int(issue) > int(checkpoint_issue)
-            except (TypeError, ValueError): return str(issue) > checkpoint_issue
-        cooldown_info = {'active': True, 'requiredNewPeriods': 100, 'collectedNewPeriods': sum(1 for row in rows if newer_than_checkpoint(row['issue']))}
-    return jsonify({'history':api_history,'predictions':predictions,'latestPrediction':latest_prediction,'cooldown':cooldown_info,'totalHistory':total,'latest':latest,'stats':{'settled':len(settled),'wins':wins,'losses':len(settled)-wins,'accuracy':round(wins/len(settled)*100) if settled else 0},'serverTime':datetime.now(timezone.utc).isoformat(),'pollSeconds':POLL_SECONDS,'collector':collector,'engine':current_engine})
+    return jsonify({"status": "ok"}), 200
 
 
-@app.get('/api/prediction')
-def prediction_json():
-    """Fast public JSON endpoint; serves the collector's saved prediction."""
-    with engine.connect() as c:
-        current = c.execute(text("""SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy
-            FROM predictions WHERE result='PENDING' ORDER BY target_issue DESC LIMIT 1""")).mappings().first()
-        previous = c.execute(text("""SELECT target_issue,prediction,actual,actual_number,result,saved_at,colour,number_pick,logic_name,logic_accuracy
-            FROM predictions WHERE result IN ('WIN','LOSS') ORDER BY target_issue DESC LIMIT 1""")).mappings().first()
-        latest_result = c.execute(text('SELECT issue FROM results ORDER BY issue DESC LIMIT 1')).first()
-        if current and latest_result and str(current['target_issue']).isdigit() and str(latest_result[0]).isdigit() and int(current['target_issue']) <= int(latest_result[0]):
-            current = None
-
-    def public_record(r):
-        if not r: return None
-        return {
-            'periodNumber': r['target_issue'],
-            'prediction': r['prediction'],
-            'status': r['result'],
-            'actualResult': r['actual'] or None,
-            'actualNumber': r['actual_number'],
-            'colourPrediction': r['colour'],
-            'numberPrediction': r['number_pick'],
-            'logicName': r['logic_name'] or '--',
-            'logicAccuracy': r['logic_accuracy'],
-            'createdAt': r['saved_at']
-        }
-
-    with collector_status_lock:
-        collector = dict(collector_status)
-    response = jsonify({
-        'ok': True,
-        'game': 'WinGo_30S',
-        'currentPrediction': public_record(current),
-        'previousPrediction': public_record(previous),
-        'collector': collector,
-        'updatedAt': datetime.now(timezone.utc).isoformat()
-    })
-    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
-    return response
-
-
-@app.get('/api/predictions.csv')
-def predictions_csv():
-    """Download the complete saved prediction history as UTF-8 CSV."""
-    with engine.connect() as c:
-        rows = c.execute(text('''SELECT target_issue,prediction,actual,actual_number,result,colour,number_pick,logic_name,logic_accuracy,saved_at FROM predictions ORDER BY target_issue DESC''')).mappings().all()
-    output = io.StringIO(newline='')
-    writer = csv.writer(output)
-    writer.writerow(['Period Number', 'Prediction', 'Actual Result', 'Actual Number', 'WIN/LOSS Status', 'Colour Prediction', 'Number Prediction', 'Logic Used', 'Logic Accuracy (%)', 'Prediction Time'])
-    for r in rows:
-        writer.writerow([r['target_issue'], r['prediction'], r['actual'] or '', r['actual_number'] if r['actual_number'] is not None else '', r['result'], r['colour'] or '', r['number_pick'] if r['number_pick'] is not None else '', r['logic_name'] or '', r['logic_accuracy'] if r['logic_accuracy'] is not None else '', r['saved_at']])
-    data = '\ufeff' + output.getvalue()
-    return Response(data, mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': 'attachment; filename=wingo_prediction_history.csv', 'Cache-Control': 'no-store'})
-
-
-@app.post('/api/predictions/clear')
-def clear_prediction_history():
-    # Same reset semantics as the automatic 6-result streak circuit breaker.
-    # Keep actual draw results so the next cycle can immediately re-analyse recent 100 periods.
-    with engine.begin() as c:
-        c.execute(text('DELETE FROM predictions'))
-        c.execute(text('DELETE FROM active_logic_state'))
-        c.execute(text('DELETE FROM prediction_cooldown'))
-    return jsonify({'ok':True,'message':'Prediction history and streak counters cleared; actual draw history preserved. Logic selection will be recalculated from recent 100 periods.'})
-
-
-init_db()
-# Gunicorn should run a single worker (see render.yaml); guard prevents duplicate threads on reloader.
-threading.Thread(target=collector_loop,daemon=True,name='wingo-collector').start()
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
