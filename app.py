@@ -60,6 +60,7 @@ state = {
     "big_votes": 0,
     "small_votes": 0,
     "total_matches": 0,
+    "live_matches": 0,
     "big_pct": 0.0,
     "small_pct": 0.0,
     "history": []
@@ -158,6 +159,110 @@ def get_size(num):
     return "BIG" if int(num) >= 5 else "SMALL"
 
 
+def get_live_pair_votes(history, pair_key):
+    """Saved prediction history ke settled results se pair votes count karein."""
+    live_big = 0
+    live_small = 0
+    target_pair = pair_key.replace("-", " → ")
+    for row in history:
+        if row.get("pair") == target_pair and row.get("actual_size") in ("BIG", "SMALL"):
+            if row["actual_size"] == "BIG":
+                live_big += 1
+            else:
+                live_small += 1
+    return live_big, live_small
+
+
+def compute_good_time_notes(history):
+    """
+    Jab bhi lagatar Level 1 se Level 4 ke andar winning chalti rahe
+    (max consecutive loss <= 3) aur kam se kam 5 settled rounds + 3 wins hon,
+    us time-slot ko automatically Good Time Note bana kar return karein.
+    """
+    settled = [r for r in reversed(history) if r.get("status") in ("WIN", "LOSS")]
+    notes = []
+
+    seg = None  # current good run segment
+
+    def finalize_segment(s, is_active=False):
+        if not s:
+            return
+        total = s["wins"] + s["losses"]
+        if s["wins"] >= 3 and total >= 5:
+            win_rate = round((s["wins"] / total) * 100, 1)
+            dur_mins = 0
+            if s["start_ts"] and s["end_ts"]:
+                dur_mins = max(1, round((s["end_ts"] - s["start_ts"]) / 60))
+            else:
+                dur_mins = max(1, round((total * 30) / 60))
+
+            notes.append({
+                "start_time": s["start_time"],
+                "end_time": "Now" if is_active else s["end_time"],
+                "duration_min": dur_mins,
+                "wins": s["wins"],
+                "losses": s["losses"],
+                "total": total,
+                "win_rate": win_rate,
+                "max_level": s["max_level"],
+                "active": is_active
+            })
+
+    consec_losses = 0
+    pending_losses = 0
+
+    for row in settled:
+        st = row["status"]
+        t_str = row.get("time", "--:--")
+        ts = row.get("ts")
+
+        if seg is None:
+            if st == "WIN":
+                seg = {
+                    "start_time": t_str,
+                    "end_time": t_str,
+                    "start_ts": ts,
+                    "end_ts": ts,
+                    "wins": 1,
+                    "losses": 0,
+                    "max_level": 1
+                }
+                consec_losses = 0
+                pending_losses = 0
+            else:
+                # Loss se start ho toh wait karein jab tak level 4 ke andar win na aaye
+                consec_losses += 1
+                if consec_losses >= 4:
+                    consec_losses = 0
+        else:
+            if st == "WIN":
+                level_used = consec_losses + 1
+                seg["wins"] += 1
+                seg["losses"] += pending_losses
+                seg["end_time"] = t_str
+                seg["end_ts"] = ts
+                if level_used > seg["max_level"]:
+                    seg["max_level"] = level_used
+                consec_losses = 0
+                pending_losses = 0
+            else:
+                consec_losses += 1
+                pending_losses += 1
+                if consec_losses >= 4:
+                    # 4th loss aate hi safe run khatam — last win tak ka note save karein
+                    finalize_segment(seg, is_active=False)
+                    seg = None
+                    consec_losses = 0
+                    pending_losses = 0
+
+    # Agar abhi bhi safe run chal raha hai
+    if seg is not None:
+        finalize_segment(seg, is_active=True)
+
+    notes.reverse()  # Sabse naya note upar
+    return notes
+
+
 def process_api_data(draw_list):
     if not draw_list or len(draw_list) < 2:
         return
@@ -172,17 +277,12 @@ def process_api_data(draw_list):
     result_map = {str(item["issueNumber"]): int(item["number"]) for item in draw_list}
     next_period = str(int(latest_period) + 1)
     pair_key = f"{prev_num}-{latest_num}"
-    now_str = datetime.now(IST).strftime("%I:%M:%S %p")
+    now_dt = datetime.now(IST)
+    now_str = now_dt.strftime("%I:%M:%S %p")
+    now_ts = int(now_dt.timestamp())
 
     with state_lock:
-        votes = pair_stats.get(pair_key, {"big": 0, "small": 0})
-        big_v = votes["big"]
-        small_v = votes["small"]
-        total = big_v + small_v
-        big_pct = round((big_v / total) * 100, 1) if total > 0 else 50.0
-        small_pct = round((small_v / total) * 100, 1) if total > 0 else 50.0
-        pred = "BIG" if big_v >= small_v else "SMALL"
-
+        # 1. Pehle pending predictions ka WIN/LOSS check karein (taaki live history updated rahe)
         changed = False
         for row in state["history"]:
             if row["status"] == "PENDING" and row["period"] in result_map:
@@ -193,6 +293,20 @@ def process_api_data(draw_list):
                 row["status"] = "WIN" if row["prediction"] == actual_size else "LOSS"
                 changed = True
 
+        # 2. CSV + Live History dono ko mila kar voting karein
+        csv_votes = pair_stats.get(pair_key, {"big": 0, "small": 0})
+        live_big, live_small = get_live_pair_votes(state["history"], pair_key)
+
+        big_v = csv_votes["big"] + live_big
+        small_v = csv_votes["small"] + live_small
+        live_total = live_big + live_small
+        total = big_v + small_v
+
+        big_pct = round((big_v / total) * 100, 1) if total > 0 else 50.0
+        small_pct = round((small_v / total) * 100, 1) if total > 0 else 50.0
+        pred = "BIG" if big_v >= small_v else "SMALL"
+
+        # 3. Naye next_period ki prediction add karein
         existing_periods = {row["period"] for row in state["history"]}
         if next_period not in existing_periods:
             state["history"].insert(0, {
@@ -202,7 +316,8 @@ def process_api_data(draw_list):
                 "actual_num": None,
                 "actual_size": None,
                 "status": "PENDING",
-                "time": now_str
+                "time": now_str,
+                "ts": now_ts
             })
             changed = True
 
@@ -218,6 +333,7 @@ def process_api_data(draw_list):
         state["big_votes"] = big_v
         state["small_votes"] = small_v
         state["total_matches"] = total
+        state["live_matches"] = live_total
         state["big_pct"] = big_pct
         state["small_pct"] = small_pct
 
@@ -298,6 +414,7 @@ def api_state():
 
         total_settled = wins + losses
         win_rate = round((wins / total_settled) * 100, 1) if total_settled > 0 else 0.0
+        good_notes = compute_good_time_notes(state["history"])
 
         return jsonify({
             **state,
@@ -306,7 +423,8 @@ def api_state():
             "losses": losses,
             "win_rate": win_rate,
             "max_win_streak": max_win_streak,
-            "max_loss_streak": max_loss_streak
+            "max_loss_streak": max_loss_streak,
+            "notes": good_notes
         })
 
 
