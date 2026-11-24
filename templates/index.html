@@ -174,9 +174,41 @@
     .upload-msg.ok { color: var(--win); }
     .upload-msg.err { color: var(--loss); }
 
-    /* History */
-    .history-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-    .history-head h2 { font-size: 1rem; font-weight: 700; }
+    /* Tabs */
+    .tabs-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .tab-group {
+      display: inline-flex;
+      background: var(--bg);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      gap: 4px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 7px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--card);
+      color: var(--text);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
 
     .btn-clear {
       background: transparent;
@@ -191,6 +223,7 @@
 
     .btn-clear:hover { border-color: var(--loss); color: var(--loss); background: var(--loss-soft); }
 
+    /* Table */
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
     th {
@@ -211,7 +244,34 @@
     .badge-WIN { background: var(--win-soft); color: var(--win); }
     .badge-LOSS { background: var(--loss-soft); color: var(--loss); }
     .badge-PENDING { background: #f1f5f9; color: var(--muted); }
+
+    /* Notes List */
+    .note-item {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      background: var(--bg);
+    }
+
+    .note-item.active-note {
+      border-color: #86efac;
+      background: var(--win-soft);
+    }
+
+    .note-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .note-time { font-weight: 700; font-size: 0.9rem; }
+    .note-sub { font-size: 0.8rem; color: var(--muted); }
+
     .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 0.88rem; }
+    .hidden { display: none; }
 
     @media (max-width: 480px) {
       .pred-value { font-size: 1.9rem; }
@@ -225,7 +285,7 @@
     <div class="header">
       <div class="title">
         <h1>WinGo Pair Predictor</h1>
-        <div class="subtitle" id="csvSubtitle">Auto 3s Background Sync</div>
+        <div class="subtitle" id="csvSubtitle">CSV + Live History Auto Sync</div>
       </div>
       <div class="status-pill">
         <span id="statusDot" class="dot"></span>
@@ -304,11 +364,20 @@
     </div>
 
     <div class="card">
-      <div class="history-head">
-        <h2>Prediction History (<span id="historyCount">0</span>)</h2>
+      <div class="tabs-row">
+        <div class="tab-group">
+          <button id="tabHistoryBtn" class="tab-btn active" onclick="switchTab('history')">
+            History (<span id="historyCount">0</span>)
+          </button>
+          <button id="tabNotesBtn" class="tab-btn" onclick="switchTab('notes')">
+            Notes (<span id="notesCount">0</span>)
+          </button>
+        </div>
         <button class="btn-clear" onclick="clearHistory()">Clear History</button>
       </div>
-      <div class="table-wrap">
+
+      <!-- History Tab -->
+      <div id="historyPanel" class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -324,10 +393,27 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Good Time Notes Tab -->
+      <div id="notesPanel" class="hidden">
+        <div id="notesList">
+          <div class="empty">Jab 3–4 level ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
+    let activeTab = "history";
+
+    function switchTab(tab) {
+      activeTab = tab;
+      document.getElementById("tabHistoryBtn").classList.toggle("active", tab === "history");
+      document.getElementById("tabNotesBtn").classList.toggle("active", tab === "notes");
+      document.getElementById("historyPanel").classList.toggle("hidden", tab !== "history");
+      document.getElementById("notesPanel").classList.toggle("hidden", tab !== "notes");
+    }
+
     async function fetchState() {
       try {
         const res = await fetch("/api/state", { cache: "no-store" });
@@ -346,9 +432,9 @@
         if (d.csv_info) {
           document.getElementById("csvName").textContent = `Active CSV: ${d.csv_info.filename}`;
           document.getElementById("csvDetails").textContent =
-            `${d.csv_info.valid_records.toLocaleString()} valid records · Saved: ${d.csv_info.saved_at}`;
+            `${d.csv_info.valid_records.toLocaleString()} CSV + Live History · Saved: ${d.csv_info.saved_at}`;
           document.getElementById("csvSubtitle").textContent =
-            `${d.csv_info.valid_records.toLocaleString()} CSV Records · Auto 3s Sync`;
+            `${d.csv_info.valid_records.toLocaleString()} CSV + Live Learning · Auto 3s Sync`;
         }
 
         document.getElementById("nextPeriod").textContent = d.next_period || "—";
@@ -363,7 +449,9 @@
         document.getElementById("predValue").textContent = d.prediction || "—";
 
         if (d.total_matches > 0) {
-          document.getElementById("matchMeta").textContent = `Historical Matches: ${d.total_matches} times`;
+          const liveTxt = d.live_matches > 0 ? ` (+${d.live_matches} Live)` : "";
+          document.getElementById("matchMeta").textContent =
+            `Total Matches: ${d.total_matches}${liveTxt}`;
         }
 
         document.getElementById("bigLabel").textContent = `BIG: ${d.big_votes} (${d.big_pct}%)`;
@@ -376,28 +464,51 @@
         document.getElementById("maxWinStreak").textContent = d.max_win_streak || 0;
         document.getElementById("maxLossStreak").textContent = d.max_loss_streak || 0;
 
+        // Render History
         const history = d.history || [];
         document.getElementById("historyCount").textContent = history.length;
 
         const tbody = document.getElementById("historyBody");
         if (history.length === 0) {
           tbody.innerHTML = '<tr><td colspan="5" class="empty">Abhi koi history nahi hai</td></tr>';
-          return;
+        } else {
+          tbody.innerHTML = history.map(row => {
+            const shortPeriod = row.period.slice(-6);
+            const actual = row.actual_num !== null ? `${row.actual_num} (${row.actual_size})` : "—";
+            return `
+              <tr>
+                <td>#${shortPeriod}</td>
+                <td>${row.pair}</td>
+                <td><span class="badge badge-${row.prediction}">${row.prediction}</span></td>
+                <td>${actual}</td>
+                <td><span class="badge badge-${row.status}">${row.status}</span></td>
+              </tr>
+            `;
+          }).join("");
         }
 
-        tbody.innerHTML = history.map(row => {
-          const shortPeriod = row.period.slice(-6);
-          const actual = row.actual_num !== null ? `${row.actual_num} (${row.actual_size})` : "—";
-          return `
-            <tr>
-              <td>#${shortPeriod}</td>
-              <td>${row.pair}</td>
-              <td><span class="badge badge-${row.prediction}">${row.prediction}</span></td>
-              <td>${actual}</td>
-              <td><span class="badge badge-${row.status}">${row.status}</span></td>
-            </tr>
-          `;
-        }).join("");
+        // Render Good Time Notes
+        const notes = d.notes || [];
+        document.getElementById("notesCount").textContent = notes.length;
+
+        const notesList = document.getElementById("notesList");
+        if (notes.length === 0) {
+          notesList.innerHTML = '<div class="empty">Jab 3–4 level ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>';
+        } else {
+          notesList.innerHTML = notes.map(n => `
+            <div class="note-item ${n.active ? "active-note" : ""}">
+              <div class="note-top">
+                <span class="note-time">${n.start_time} – ${n.end_time} (${n.duration_min} min)</span>
+                <span class="badge ${n.active ? "badge-WIN" : "badge-PENDING"}">
+                  ${n.active ? "Active Good Time" : "Max Level " + n.max_level}
+                </span>
+              </div>
+              <div class="note-sub">
+                Wins: <b>${n.wins}</b> · Losses: <b>${n.losses}</b> · Win Rate: <b>${n.win_rate}%</b> · Max Level: <b>L${n.max_level}</b>
+              </div>
+            </div>
+          `).join("");
+        }
       } catch (err) {
         document.getElementById("statusDot").classList.remove("live");
         document.getElementById("statusText").textContent = "Server Offline";
@@ -423,7 +534,7 @@
         const data = await res.json();
         if (data.ok) {
           msg.className = "upload-msg ok";
-          msg.textContent = `Saved! Ab background predictor is CSV (${data.csv_info.valid_records.toLocaleString()} records) se chalega.`;
+          msg.textContent = `Saved! Ab CSV (${data.csv_info.valid_records.toLocaleString()} records) + Live History se prediction chalegi.`;
           fetchState();
         } else {
           msg.className = "upload-msg err";
@@ -440,7 +551,7 @@
     }
 
     async function clearHistory() {
-      if (!confirm("Kya aap puri prediction history clear karna chahte hain?")) return;
+      if (!confirm("Kya aap puri prediction history aur notes clear karna chahte hain?")) return;
       await fetch("/api/clear", { method: "POST" });
       fetchState();
     }
