@@ -13,6 +13,7 @@ app = Flask(__name__)
 API_URL = "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json"
 HISTORY_FILE = "prediction_history.json"
 STATS_FILE = "saved_pair_stats.json"
+SETTINGS_FILE = "app_settings.json"
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # Default 16,906 valid CSV records (fallback)
@@ -50,6 +51,10 @@ csv_info = {
     "saved_at": "Built-in"
 }
 
+settings = {
+    "use_live_history": True
+}
+
 state = {
     "status": "Starting...",
     "last_updated": None,
@@ -65,6 +70,26 @@ state = {
     "small_pct": 0.0,
     "history": []
 }
+
+
+def load_settings():
+    global settings
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "use_live_history" in data:
+                    settings["use_live_history"] = bool(data["use_live_history"])
+        except Exception:
+            pass
+
+
+def save_settings():
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f)
+    except Exception:
+        pass
 
 
 def load_saved_stats():
@@ -159,8 +184,37 @@ def get_size(num):
     return "BIG" if int(num) >= 5 else "SMALL"
 
 
+def format_hour_slot(h):
+    def fmt(hr):
+        hr = hr % 24
+        ampm = "AM" if hr < 12 else "PM"
+        h12 = hr % 12
+        if h12 == 0:
+            h12 = 12
+        return f"{h12:02d} {ampm}"
+    return f"{fmt(h)} – {fmt(h + 1)}"
+
+
+def extract_row_time_info(row):
+    ts = row.get("ts")
+    if ts:
+        try:
+            dt = datetime.fromtimestamp(int(ts), tz=IST)
+            return dt.hour, dt.strftime("%Y-%m-%d"), dt.strftime("%A")
+        except Exception:
+            pass
+
+    t_str = row.get("time")
+    if t_str:
+        try:
+            dt = datetime.strptime(t_str, "%I:%M:%S %p")
+            return dt.hour, "Saved", None
+        except Exception:
+            pass
+    return None, None, None
+
+
 def get_live_pair_votes(history, pair_key):
-    """Saved prediction history ke settled results se pair votes count karein."""
     live_big = 0
     live_small = 0
     target_pair = pair_key.replace("-", " → ")
@@ -174,15 +228,9 @@ def get_live_pair_votes(history, pair_key):
 
 
 def compute_good_time_notes(history):
-    """
-    Jab bhi lagatar Level 1 se Level 4 ke andar winning chalti rahe
-    (max consecutive loss <= 3) aur kam se kam 5 settled rounds + 3 wins hon,
-    us time-slot ko automatically Good Time Note bana kar return karein.
-    """
     settled = [r for r in reversed(history) if r.get("status") in ("WIN", "LOSS")]
     notes = []
-
-    seg = None  # current good run segment
+    seg = None
 
     def finalize_segment(s, is_active=False):
         if not s:
@@ -190,7 +238,6 @@ def compute_good_time_notes(history):
         total = s["wins"] + s["losses"]
         if s["wins"] >= 3 and total >= 5:
             win_rate = round((s["wins"] / total) * 100, 1)
-            dur_mins = 0
             if s["start_ts"] and s["end_ts"]:
                 dur_mins = max(1, round((s["end_ts"] - s["start_ts"]) / 60))
             else:
@@ -230,7 +277,6 @@ def compute_good_time_notes(history):
                 consec_losses = 0
                 pending_losses = 0
             else:
-                # Loss se start ho toh wait karein jab tak level 4 ke andar win na aaye
                 consec_losses += 1
                 if consec_losses >= 4:
                     consec_losses = 0
@@ -249,18 +295,153 @@ def compute_good_time_notes(history):
                 consec_losses += 1
                 pending_losses += 1
                 if consec_losses >= 4:
-                    # 4th loss aate hi safe run khatam — last win tak ka note save karein
                     finalize_segment(seg, is_active=False)
                     seg = None
                     consec_losses = 0
                     pending_losses = 0
 
-    # Agar abhi bhi safe run chal raha hai
     if seg is not None:
         finalize_segment(seg, is_active=True)
 
-    notes.reverse()  # Sabse naya note upar
+    notes.reverse()
     return notes
+
+
+def compute_strong_times(history):
+    settled = [r for r in reversed(history) if r.get("status") in ("WIN", "LOSS")]
+
+    hour_buckets = {}
+    day_buckets = {}
+
+    for row in settled:
+        st = row["status"]
+        hour, date_str, weekday = extract_row_time_info(row)
+
+        if hour is not None:
+            hb = hour_buckets.setdefault(hour, {
+                "wins": 0,
+                "losses": 0,
+                "cur_loss": 0,
+                "max_loss": 0,
+                "by_date": {}
+            })
+            if st == "WIN":
+                hb["wins"] += 1
+                hb["cur_loss"] = 0
+            else:
+                hb["losses"] += 1
+                hb["cur_loss"] += 1
+                if hb["cur_loss"] > hb["max_loss"]:
+                    hb["max_loss"] = hb["cur_loss"]
+
+            if date_str:
+                db = hb["by_date"].setdefault(date_str, {"wins": 0, "losses": 0, "cur_loss": 0, "max_loss": 0})
+                if st == "WIN":
+                    db["wins"] += 1
+                    db["cur_loss"] = 0
+                else:
+                    db["losses"] += 1
+                    db["cur_loss"] += 1
+                    if db["cur_loss"] > db["max_loss"]:
+                        db["max_loss"] = db["cur_loss"]
+
+        if weekday:
+            wb = day_buckets.setdefault(weekday, {
+                "wins": 0,
+                "losses": 0,
+                "cur_loss": 0,
+                "max_loss": 0,
+                "dates": set()
+            })
+            if st == "WIN":
+                wb["wins"] += 1
+                wb["cur_loss"] = 0
+            else:
+                wb["losses"] += 1
+                wb["cur_loss"] += 1
+                if wb["cur_loss"] > wb["max_loss"]:
+                    wb["max_loss"] = wb["cur_loss"]
+            if date_str:
+                wb["dates"].add(date_str)
+
+    hourly_list = []
+    for h, hb in hour_buckets.items():
+        total = hb["wins"] + hb["losses"]
+        win_rate = round((hb["wins"] / total) * 100, 1) if total > 0 else 0.0
+
+        days_tracked = len(hb["by_date"])
+        strong_days = 0
+        for d_stat in hb["by_date"].values():
+            d_tot = d_stat["wins"] + d_stat["losses"]
+            d_wr = (d_stat["wins"] / d_tot) * 100 if d_tot > 0 else 0
+            if d_tot >= 3 and (d_wr >= 55 or (d_stat["max_loss"] <= 3 and d_wr >= 50)):
+                strong_days += 1
+
+        is_strong = total >= 5 and (win_rate >= 55.0 or (hb["max_loss"] <= 3 and win_rate >= 50.0))
+
+        hourly_list.append({
+            "hour": h,
+            "slot": format_hour_slot(h),
+            "wins": hb["wins"],
+            "losses": hb["losses"],
+            "total": total,
+            "win_rate": win_rate,
+            "max_loss_streak": hb["max_loss"],
+            "days_tracked": days_tracked,
+            "strong_days": strong_days,
+            "is_strong": is_strong
+        })
+
+    hourly_list.sort(key=lambda x: (x["is_strong"], x["strong_days"], x["win_rate"], x["total"]), reverse=True)
+
+    day_list = []
+    for day_name, wb in day_buckets.items():
+        total = wb["wins"] + wb["losses"]
+        win_rate = round((wb["wins"] / total) * 100, 1) if total > 0 else 0.0
+        is_strong = total >= 5 and (win_rate >= 55.0 or (wb["max_loss"] <= 3 and win_rate >= 50.0))
+        day_list.append({
+            "day": day_name,
+            "wins": wb["wins"],
+            "losses": wb["losses"],
+            "total": total,
+            "win_rate": win_rate,
+            "max_loss_streak": wb["max_loss"],
+            "dates_count": len(wb["dates"]),
+            "is_strong": is_strong
+        })
+
+    day_list.sort(key=lambda x: (x["is_strong"], x["win_rate"], x["total"]), reverse=True)
+
+    return {
+        "best_hour": hourly_list[0] if hourly_list else None,
+        "best_day": day_list[0] if day_list else None,
+        "hours": hourly_list,
+        "days": day_list
+    }
+
+
+def calculate_votes_for_pair(pair_key, history):
+    """Toggle ke hisaab se sirf CSV ya CSV + Live History se votes nikaalein."""
+    csv_votes = pair_stats.get(pair_key, {"big": 0, "small": 0})
+    big_v = csv_votes["big"]
+    small_v = csv_votes["small"]
+    live_total = 0
+
+    if settings.get("use_live_history", True):
+        live_big, live_small = get_live_pair_votes(history, pair_key)
+        big_v += live_big
+        small_v += live_small
+        live_total = live_big + live_small
+
+    total = big_v + small_v
+    if total == 0:
+        # Koi dummy prediction nahi deni hai
+        return 0, 0, 0, 0, 0.0, 0.0, None
+
+    big_pct = round((big_v / total) * 100, 1)
+    small_pct = round((small_v / total) * 100, 1)
+    pred = "BIG" if big_v >= small_v else "SMALL"
+    return big_v, small_v, total, live_total, big_pct, small_pct, pred
 
 
 def process_api_data(draw_list):
@@ -282,7 +463,7 @@ def process_api_data(draw_list):
     now_ts = int(now_dt.timestamp())
 
     with state_lock:
-        # 1. Pehle pending predictions ka WIN/LOSS check karein (taaki live history updated rahe)
+        # 1. Pending predictions ka WIN/LOSS check karein
         changed = False
         for row in state["history"]:
             if row["status"] == "PENDING" and row["period"] in result_map:
@@ -293,33 +474,26 @@ def process_api_data(draw_list):
                 row["status"] = "WIN" if row["prediction"] == actual_size else "LOSS"
                 changed = True
 
-        # 2. CSV + Live History dono ko mila kar voting karein
-        csv_votes = pair_stats.get(pair_key, {"big": 0, "small": 0})
-        live_big, live_small = get_live_pair_votes(state["history"], pair_key)
+        # 2. Votes calculate karein (Toggle ke hisaab se)
+        big_v, small_v, total, live_total, big_pct, small_pct, pred = calculate_votes_for_pair(
+            pair_key, state["history"]
+        )
 
-        big_v = csv_votes["big"] + live_big
-        small_v = csv_votes["small"] + live_small
-        live_total = live_big + live_small
-        total = big_v + small_v
-
-        big_pct = round((big_v / total) * 100, 1) if total > 0 else 50.0
-        small_pct = round((small_v / total) * 100, 1) if total > 0 else 50.0
-        pred = "BIG" if big_v >= small_v else "SMALL"
-
-        # 3. Naye next_period ki prediction add karein
-        existing_periods = {row["period"] for row in state["history"]}
-        if next_period not in existing_periods:
-            state["history"].insert(0, {
-                "period": next_period,
-                "pair": f"{prev_num} → {latest_num}",
-                "prediction": pred,
-                "actual_num": None,
-                "actual_size": None,
-                "status": "PENDING",
-                "time": now_str,
-                "ts": now_ts
-            })
-            changed = True
+        # 3. Sirf valid prediction hone par hi history mein add karein (No dummy prediction)
+        if pred is not None:
+            existing_periods = {row["period"] for row in state["history"]}
+            if next_period not in existing_periods:
+                state["history"].insert(0, {
+                    "period": next_period,
+                    "pair": f"{prev_num} → {latest_num}",
+                    "prediction": pred,
+                    "actual_num": None,
+                    "actual_size": None,
+                    "status": "PENDING",
+                    "time": now_str,
+                    "ts": now_ts
+                })
+                changed = True
 
         if changed:
             save_history(state["history"])
@@ -370,6 +544,7 @@ def ensure_worker_started():
     if not worker_started:
         with worker_lock:
             if not worker_started:
+                load_settings()
                 load_saved_stats()
                 state["history"] = load_history()
                 t = threading.Thread(target=background_worker, daemon=True)
@@ -415,17 +590,46 @@ def api_state():
         total_settled = wins + losses
         win_rate = round((wins / total_settled) * 100, 1) if total_settled > 0 else 0.0
         good_notes = compute_good_time_notes(state["history"])
+        strong_times = compute_strong_times(state["history"])
 
         return jsonify({
             **state,
             "csv_info": csv_info,
+            "use_live_history": settings["use_live_history"],
             "wins": wins,
             "losses": losses,
             "win_rate": win_rate,
             "max_win_streak": max_win_streak,
             "max_loss_streak": max_loss_streak,
-            "notes": good_notes
+            "notes": good_notes,
+            "strong_times": strong_times
         })
+
+
+@app.route("/api/toggle-live-history", methods=["POST"])
+def toggle_live_history():
+    data = request.get_json(silent=True) or {}
+    new_val = bool(data.get("enabled", not settings["use_live_history"]))
+
+    with state_lock:
+        settings["use_live_history"] = new_val
+        save_settings()
+
+        # Current pair ke votes turant recalculate karein
+        if state["pair"]:
+            pair_key = f"{state['pair'][0]}-{state['pair'][1]}"
+            big_v, small_v, total, live_total, big_pct, small_pct, pred = calculate_votes_for_pair(
+                pair_key, state["history"]
+            )
+            state["prediction"] = pred
+            state["big_votes"] = big_v
+            state["small_votes"] = small_v
+            state["total_matches"] = total
+            state["live_matches"] = live_total
+            state["big_pct"] = big_pct
+            state["small_pct"] = small_pct
+
+    return jsonify({"ok": True, "use_live_history": new_val})
 
 
 @app.route("/api/upload-csv", methods=["POST"])
