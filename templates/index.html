@@ -143,7 +143,7 @@
     .stat-win { color: var(--win); }
     .stat-loss { color: var(--loss); }
 
-    /* CSV Upload Bar */
+    /* CSV & Toggle Bar */
     .csv-bar {
       display: flex;
       justify-content: space-between;
@@ -155,6 +155,54 @@
     .csv-meta { font-size: 0.84rem; color: var(--text); font-weight: 600; }
     .csv-sub { font-size: 0.76rem; color: var(--muted); }
     .csv-actions { display: flex; align-items: center; gap: 8px; }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 14px 0;
+    }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Clean Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .switch input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #cbd5e1;
+      transition: 0.25s;
+      border-radius: 999px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.25s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: var(--win); }
+    input:checked + .slider:before { transform: translateX(20px); }
 
     .btn-primary {
       background: var(--text);
@@ -191,14 +239,15 @@
       border-radius: 10px;
       border: 1px solid var(--border);
       gap: 4px;
+      flex-wrap: wrap;
     }
 
     .tab-btn {
       background: transparent;
       border: none;
-      padding: 6px 12px;
+      padding: 6px 11px;
       border-radius: 7px;
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       font-weight: 600;
       color: var(--muted);
       cursor: pointer;
@@ -245,7 +294,7 @@
     .badge-LOSS { background: var(--loss-soft); color: var(--loss); }
     .badge-PENDING { background: #f1f5f9; color: var(--muted); }
 
-    /* Notes List */
+    /* Notes & Strong Time */
     .note-item {
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -270,6 +319,36 @@
     .note-time { font-weight: 700; font-size: 0.9rem; }
     .note-sub { font-size: 0.8rem; color: var(--muted); }
 
+    .best-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .best-box {
+      border: 1px solid #86efac;
+      background: var(--win-soft);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .best-val {
+      font-size: 1.05rem;
+      font-weight: 800;
+      color: var(--win);
+      margin-top: 3px;
+    }
+
+    .section-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 14px 0 8px;
+    }
+
     .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 0.88rem; }
     .hidden { display: none; }
 
@@ -277,6 +356,7 @@
       .pred-value { font-size: 1.9rem; }
       .period-num { font-size: 0.92rem; }
       td, th { font-size: 0.8rem; }
+      .best-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -285,7 +365,7 @@
     <div class="header">
       <div class="title">
         <h1>WinGo Pair Predictor</h1>
-        <div class="subtitle" id="csvSubtitle">CSV + Live History Auto Sync</div>
+        <div class="subtitle" id="csvSubtitle">Auto 3s Background Sync</div>
       </div>
       <div class="status-pill">
         <span id="statusDot" class="dot"></span>
@@ -347,6 +427,7 @@
       </div>
     </div>
 
+    <!-- CSV Upload + Live History Learning Toggle -->
     <div class="card">
       <div class="csv-bar">
         <div>
@@ -361,6 +442,19 @@
         </div>
       </div>
       <div id="uploadMsg" class="upload-msg"></div>
+
+      <div class="divider"></div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="csv-meta">Live History Analysis</div>
+          <div class="csv-sub" id="toggleDesc">ON: CSV + Live History · OFF: Sirf CSV</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="liveHistoryToggle" onchange="toggleLiveHistory()" />
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="card">
@@ -371,6 +465,9 @@
           </button>
           <button id="tabNotesBtn" class="tab-btn" onclick="switchTab('notes')">
             Notes (<span id="notesCount">0</span>)
+          </button>
+          <button id="tabStrongBtn" class="tab-btn" onclick="switchTab('strong')">
+            Strong Time
           </button>
         </div>
         <button class="btn-clear" onclick="clearHistory()">Clear History</button>
@@ -400,18 +497,58 @@
           <div class="empty">Jab 3–4 level ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>
         </div>
       </div>
+
+      <!-- Strong Time & Strong Day Tab -->
+      <div id="strongPanel" class="hidden">
+        <div class="best-grid">
+          <div class="best-box">
+            <div class="label">Strongest Hour</div>
+            <div class="best-val" id="bestHourVal">—</div>
+            <div class="note-sub" id="bestHourSub">Data collect ho raha hai...</div>
+          </div>
+          <div class="best-box">
+            <div class="label">Strongest Day</div>
+            <div class="best-val" id="bestDayVal">—</div>
+            <div class="note-sub" id="bestDaySub">Data collect ho raha hai...</div>
+          </div>
+        </div>
+
+        <div class="section-title">Hourly Performance (Har Ghante ka Record)</div>
+        <div id="strongHoursList">
+          <div class="empty">Abhi hourly data nahi hai.</div>
+        </div>
+
+        <div class="section-title">Day-wise Performance (Har Din ka Record)</div>
+        <div id="strongDaysList">
+          <div class="empty">Abhi day-wise data nahi hai.</div>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
-    let activeTab = "history";
-
     function switchTab(tab) {
-      activeTab = tab;
       document.getElementById("tabHistoryBtn").classList.toggle("active", tab === "history");
       document.getElementById("tabNotesBtn").classList.toggle("active", tab === "notes");
+      document.getElementById("tabStrongBtn").classList.toggle("active", tab === "strong");
+
       document.getElementById("historyPanel").classList.toggle("hidden", tab !== "history");
       document.getElementById("notesPanel").classList.toggle("hidden", tab !== "notes");
+      document.getElementById("strongPanel").classList.toggle("hidden", tab !== "strong");
+    }
+
+    async function toggleLiveHistory() {
+      const cb = document.getElementById("liveHistoryToggle");
+      try {
+        await fetch("/api/toggle-live-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: cb.checked })
+        });
+        fetchState();
+      } catch (e) {
+        cb.checked = !cb.checked;
+      }
     }
 
     async function fetchState() {
@@ -429,12 +566,19 @@
           statusTxt.textContent = d.status || "Offline";
         }
 
+        const useLive = Boolean(d.use_live_history);
+        document.getElementById("liveHistoryToggle").checked = useLive;
+        document.getElementById("toggleDesc").textContent = useLive
+          ? "ON: CSV + Live History dono se prediction"
+          : "OFF: Sirf CSV History se prediction";
+
         if (d.csv_info) {
           document.getElementById("csvName").textContent = `Active CSV: ${d.csv_info.filename}`;
           document.getElementById("csvDetails").textContent =
-            `${d.csv_info.valid_records.toLocaleString()} CSV + Live History · Saved: ${d.csv_info.saved_at}`;
-          document.getElementById("csvSubtitle").textContent =
-            `${d.csv_info.valid_records.toLocaleString()} CSV + Live Learning · Auto 3s Sync`;
+            `${d.csv_info.valid_records.toLocaleString()} records · Saved: ${d.csv_info.saved_at}`;
+          document.getElementById("csvSubtitle").textContent = useLive
+            ? `${d.csv_info.valid_records.toLocaleString()} CSV + Live History · Auto 3s Sync`
+            : `${d.csv_info.valid_records.toLocaleString()} CSV Only · Auto 3s Sync`;
         }
 
         document.getElementById("nextPeriod").textContent = d.next_period || "—";
@@ -446,17 +590,19 @@
 
         const predBox = document.getElementById("predBox");
         predBox.className = "pred-center " + (d.prediction || "");
-        document.getElementById("predValue").textContent = d.prediction || "—";
+        document.getElementById("predValue").textContent = d.prediction || (d.status === "Live" ? "NO MATCH" : "—");
 
         if (d.total_matches > 0) {
-          const liveTxt = d.live_matches > 0 ? ` (+${d.live_matches} Live)` : "";
+          const liveTxt = (useLive && d.live_matches > 0) ? ` (+${d.live_matches} Live)` : "";
           document.getElementById("matchMeta").textContent =
             `Total Matches: ${d.total_matches}${liveTxt}`;
+        } else if (d.status === "Live") {
+          document.getElementById("matchMeta").textContent = "Is pair ka koi match nahi mila (No Dummy Prediction)";
         }
 
         document.getElementById("bigLabel").textContent = `BIG: ${d.big_votes} (${d.big_pct}%)`;
         document.getElementById("smallLabel").textContent = `SMALL: ${d.small_votes} (${d.small_pct}%)`;
-        document.getElementById("barBig").style.width = `${d.big_pct}%`;
+        document.getElementById("barBig").style.width = d.total_matches > 0 ? `${d.big_pct}%` : "50%";
 
         document.getElementById("totalWin").textContent = d.wins;
         document.getElementById("totalLoss").textContent = d.losses;
@@ -464,7 +610,7 @@
         document.getElementById("maxWinStreak").textContent = d.max_win_streak || 0;
         document.getElementById("maxLossStreak").textContent = d.max_loss_streak || 0;
 
-        // Render History
+        // 1. Render History
         const history = d.history || [];
         document.getElementById("historyCount").textContent = history.length;
 
@@ -487,7 +633,7 @@
           }).join("");
         }
 
-        // Render Good Time Notes
+        // 2. Render Notes
         const notes = d.notes || [];
         document.getElementById("notesCount").textContent = notes.length;
 
@@ -505,6 +651,66 @@
               </div>
               <div class="note-sub">
                 Wins: <b>${n.wins}</b> · Losses: <b>${n.losses}</b> · Win Rate: <b>${n.win_rate}%</b> · Max Level: <b>L${n.max_level}</b>
+              </div>
+            </div>
+          `).join("");
+        }
+
+        // 3. Render Strong Time & Strong Day
+        const st = d.strong_times || {};
+        if (st.best_hour) {
+          document.getElementById("bestHourVal").textContent = st.best_hour.slot;
+          document.getElementById("bestHourSub").textContent =
+            `${st.best_hour.win_rate}% Win · ${st.best_hour.strong_days}/${st.best_hour.days_tracked} din strong`;
+        } else {
+          document.getElementById("bestHourVal").textContent = "—";
+          document.getElementById("bestHourSub").textContent = "Data collect ho raha hai...";
+        }
+
+        if (st.best_day) {
+          document.getElementById("bestDayVal").textContent = st.best_day.day;
+          document.getElementById("bestDaySub").textContent =
+            `${st.best_day.win_rate}% Win · ${st.best_day.wins}W / ${st.best_day.losses}L`;
+        } else {
+          document.getElementById("bestDayVal").textContent = "—";
+          document.getElementById("bestDaySub").textContent = "Data collect ho raha hai...";
+        }
+
+        const hoursEl = document.getElementById("strongHoursList");
+        const hours = st.hours || [];
+        if (hours.length === 0) {
+          hoursEl.innerHTML = '<div class="empty">Abhi hourly data nahi hai.</div>';
+        } else {
+          hoursEl.innerHTML = hours.map(h => `
+            <div class="note-item ${h.is_strong ? "active-note" : ""}">
+              <div class="note-top">
+                <span class="note-time">${h.slot}</span>
+                <span class="badge ${h.is_strong ? "badge-WIN" : "badge-PENDING"}">
+                  ${h.is_strong ? "Strong Time" : h.win_rate + "%"}
+                </span>
+              </div>
+              <div class="note-sub">
+                Win Rate: <b>${h.win_rate}%</b> (${h.wins}W / ${h.losses}L) · Max Loss Streak: <b>${h.max_loss_streak}</b> · Strong Days: <b>${h.strong_days}/${h.days_tracked}</b>
+              </div>
+            </div>
+          `).join("");
+        }
+
+        const daysEl = document.getElementById("strongDaysList");
+        const days = st.days || [];
+        if (days.length === 0) {
+          daysEl.innerHTML = '<div class="empty">Abhi day-wise data nahi hai.</div>';
+        } else {
+          daysEl.innerHTML = days.map(day => `
+            <div class="note-item ${day.is_strong ? "active-note" : ""}">
+              <div class="note-top">
+                <span class="note-time">${day.day}</span>
+                <span class="badge ${day.is_strong ? "badge-WIN" : "badge-PENDING"}">
+                  ${day.is_strong ? "Strong Day" : day.win_rate + "%"}
+                </span>
+              </div>
+              <div class="note-sub">
+                Win Rate: <b>${day.win_rate}%</b> (${day.wins}W / ${day.losses}L) · Max Loss Streak: <b>${day.max_loss_streak}</b> · Days Count: <b>${day.dates_count}</b>
               </div>
             </div>
           `).join("");
@@ -534,7 +740,7 @@
         const data = await res.json();
         if (data.ok) {
           msg.className = "upload-msg ok";
-          msg.textContent = `Saved! Ab CSV (${data.csv_info.valid_records.toLocaleString()} records) + Live History se prediction chalegi.`;
+          msg.textContent = `Saved! CSV (${data.csv_info.valid_records.toLocaleString()} records) active ho gayi hai.`;
           fetchState();
         } else {
           msg.className = "upload-msg err";
@@ -551,7 +757,7 @@
     }
 
     async function clearHistory() {
-      if (!confirm("Kya aap puri prediction history aur notes clear karna chahte hain?")) return;
+      if (!confirm("Kya aap puri prediction history, notes aur strong time data clear karna chahte hain?")) return;
       await fetch("/api/clear", { method: "POST" });
       fetchState();
     }
