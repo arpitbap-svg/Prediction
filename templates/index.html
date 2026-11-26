@@ -114,7 +114,7 @@
     .pred-center.BIG { background: var(--big-soft); }
     .pred-center.SMALL { background: var(--small-soft); }
 
-    .pred-value { font-size: 2.3rem; font-weight: 800; letter-spacing: 0.04em; line-height: 1.1; margin-top: 4px; }
+    .pred-value { font-size: 2.1rem; font-weight: 800; letter-spacing: 0.04em; line-height: 1.1; margin-top: 4px; }
     .pred-center.BIG .pred-value { color: var(--big); }
     .pred-center.SMALL .pred-value { color: var(--small); }
 
@@ -156,11 +156,7 @@
     .csv-sub { font-size: 0.76rem; color: var(--muted); }
     .csv-actions { display: flex; align-items: center; gap: 8px; }
 
-    .divider {
-      height: 1px;
-      background: var(--border);
-      margin: 14px 0;
-    }
+    .divider { height: 1px; background: var(--border); margin: 14px 0; }
 
     .toggle-row {
       display: flex;
@@ -169,7 +165,6 @@
       gap: 12px;
     }
 
-    /* Clean Switch */
     .switch {
       position: relative;
       display: inline-block;
@@ -245,9 +240,9 @@
     .tab-btn {
       background: transparent;
       border: none;
-      padding: 6px 11px;
+      padding: 6px 10px;
       border-radius: 7px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       font-weight: 600;
       color: var(--muted);
       cursor: pointer;
@@ -294,7 +289,7 @@
     .badge-LOSS { background: var(--loss-soft); color: var(--loss); }
     .badge-PENDING { background: #f1f5f9; color: var(--muted); }
 
-    /* Notes & Strong Time */
+    /* Notes, Strong Time & Exact Spots */
     .note-item {
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -341,19 +336,19 @@
     }
 
     .section-title {
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       font-weight: 700;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      margin: 14px 0 8px;
+      margin: 16px 0 8px;
     }
 
-    .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 0.88rem; }
+    .empty { text-align: center; color: var(--muted); padding: 20px 0; font-size: 0.86rem; }
     .hidden { display: none; }
 
     @media (max-width: 480px) {
-      .pred-value { font-size: 1.9rem; }
+      .pred-value { font-size: 1.8rem; }
       .period-num { font-size: 0.92rem; }
       td, th { font-size: 0.8rem; }
       .best-grid { grid-template-columns: 1fr; }
@@ -365,7 +360,7 @@
     <div class="header">
       <div class="title">
         <h1>WinGo Pair Predictor</h1>
-        <div class="subtitle" id="csvSubtitle">Auto 3s Background Sync</div>
+        <div class="subtitle" id="csvSubtitle">CSV upload karein prediction shuru karne ke liye</div>
       </div>
       <div class="status-pill">
         <span id="statusDot" class="dot"></span>
@@ -389,7 +384,7 @@
       <div id="predBox" class="pred-center">
         <div class="label">Predicted Result</div>
         <div class="pred-value" id="predValue">—</div>
-        <div class="match-meta" id="matchMeta">Waiting for live data...</div>
+        <div class="match-meta" id="matchMeta">Waiting for CSV upload...</div>
       </div>
 
       <div class="vote-labels">
@@ -431,8 +426,8 @@
     <div class="card">
       <div class="csv-bar">
         <div>
-          <div class="csv-meta" id="csvName">Active CSV: Loading...</div>
-          <div class="csv-sub" id="csvDetails">—</div>
+          <div class="csv-meta" id="csvName">Active CSV: Koi CSV upload nahi hai</div>
+          <div class="csv-sub" id="csvDetails">Prediction ke liye pehle CSV upload karein</div>
         </div>
         <div class="csv-actions">
           <input type="file" id="csvFile" accept=".csv" style="display:none" onchange="uploadCSV()" />
@@ -469,11 +464,14 @@
           <button id="tabStrongBtn" class="tab-btn" onclick="switchTab('strong')">
             Strong Time
           </button>
+          <button id="tabExactBtn" class="tab-btn" onclick="switchTab('exact')">
+            Exact Spots (≤2L)
+          </button>
         </div>
-        <button class="btn-clear" onclick="clearHistory()">Clear History</button>
+        <button class="btn-clear" onclick="clearHistory()">Clear</button>
       </div>
 
-      <!-- History Tab -->
+      <!-- 1. History Tab -->
       <div id="historyPanel" class="table-wrap">
         <table>
           <thead>
@@ -491,36 +489,59 @@
         </table>
       </div>
 
-      <!-- Good Time Notes Tab -->
+      <!-- 2. Good Time Notes Tab -->
       <div id="notesPanel" class="hidden">
         <div id="notesList">
-          <div class="empty">Jab 3–4 level ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>
+          <div class="empty">Jab max 3–4 loss ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>
         </div>
       </div>
 
-      <!-- Strong Time & Strong Day Tab -->
+      <!-- 3. Strong Time & Daily Analysis Tab -->
       <div id="strongPanel" class="hidden">
         <div class="best-grid">
           <div class="best-box">
-            <div class="label">Strongest Hour</div>
+            <div class="label">Strongest Hour (Max ≤ 4 Loss)</div>
             <div class="best-val" id="bestHourVal">—</div>
             <div class="note-sub" id="bestHourSub">Data collect ho raha hai...</div>
           </div>
           <div class="best-box">
-            <div class="label">Strongest Day</div>
+            <div class="label">Strongest Day (Max ≤ 4 Loss)</div>
             <div class="best-val" id="bestDayVal">—</div>
             <div class="note-sub" id="bestDaySub">Data collect ho raha hai...</div>
           </div>
         </div>
 
-        <div class="section-title">Hourly Performance (Har Ghante ka Record)</div>
+        <div class="section-title">Overall Hourly Analysis (Har Ghante ka Record)</div>
         <div id="strongHoursList">
           <div class="empty">Abhi hourly data nahi hai.</div>
         </div>
 
-        <div class="section-title">Day-wise Performance (Har Din ka Record)</div>
+        <div class="section-title">Daily Time-wise Record (Kis Din, Kis Time, Kitni Der)</div>
+        <div id="dailyHoursList">
+          <div class="empty">Abhi daily record nahi hai.</div>
+        </div>
+
+        <div class="section-title">Day-wise Performance (Mon – Sun)</div>
         <div id="strongDaysList">
           <div class="empty">Abhi day-wise data nahi hai.</div>
+        </div>
+      </div>
+
+      <!-- 4. Exact Spots Tab (Max <= 2 Loss) -->
+      <div id="exactPanel" class="hidden">
+        <div class="section-title">Exact Clock Time (Kitne Baj ke Kitne Minute · Max ≤ 2 Loss)</div>
+        <div id="exactClocksList">
+          <div class="empty">Data collect hone par exact clock times yahan dikhenge.</div>
+        </div>
+
+        <div class="section-title">Specific Minute of Hour (Har Ghante ka Best Minute · Max ≤ 2 Loss)</div>
+        <div id="exactMinutesList">
+          <div class="empty">Data collect hone par har ghante ke best minutes yahan dikhenge.</div>
+        </div>
+
+        <div class="section-title">Exact Daily Period Numbers (Last 4 Digits · Max ≤ 2 Loss)</div>
+        <div id="exactPeriodsList">
+          <div class="empty">Jab same daily period number 2+ baar aayega, tab yahan dikhega.</div>
         </div>
       </div>
     </div>
@@ -528,13 +549,32 @@
 
   <script>
     function switchTab(tab) {
-      document.getElementById("tabHistoryBtn").classList.toggle("active", tab === "history");
-      document.getElementById("tabNotesBtn").classList.toggle("active", tab === "notes");
-      document.getElementById("tabStrongBtn").classList.toggle("active", tab === "strong");
+      ["history", "notes", "strong", "exact"].forEach(t => {
+        const cap = t.charAt(0).toUpperCase() + t.slice(1);
+        document.getElementById(`tab${cap}Btn`).classList.toggle("active", t === tab);
+        document.getElementById(`${t}Panel`).classList.toggle("hidden", t !== tab);
+      });
+    }
 
-      document.getElementById("historyPanel").classList.toggle("hidden", tab !== "history");
-      document.getElementById("notesPanel").classList.toggle("hidden", tab !== "notes");
-      document.getElementById("strongPanel").classList.toggle("hidden", tab !== "strong");
+    function renderExactList(elId, items, emptyText) {
+      const el = document.getElementById(elId);
+      if (!items || items.length === 0) {
+        el.innerHTML = `<div class="empty">${emptyText}</div>`;
+        return;
+      }
+      el.innerHTML = items.map(item => `
+        <div class="note-item ${item.back_to_back ? "active-note" : ""}">
+          <div class="note-top">
+            <span class="note-time">${item.label}</span>
+            <span class="badge ${item.back_to_back ? "badge-WIN" : "badge-PENDING"}">
+              ${item.back_to_back ? "100% Back-to-Back" : "Max " + item.max_loss + " Loss"}
+            </span>
+          </div>
+          <div class="note-sub">
+            Win Rate: <b>${item.win_rate}%</b> (${item.wins}W / ${item.losses}L) · Total: <b>${item.total}</b>
+          </div>
+        </div>
+      `).join("");
     }
 
     async function toggleLiveHistory() {
@@ -572,13 +612,17 @@
           ? "ON: CSV + Live History dono se prediction"
           : "OFF: Sirf CSV History se prediction";
 
-        if (d.csv_info) {
+        if (d.csv_loaded && d.csv_info && d.csv_info.filename) {
           document.getElementById("csvName").textContent = `Active CSV: ${d.csv_info.filename}`;
           document.getElementById("csvDetails").textContent =
             `${d.csv_info.valid_records.toLocaleString()} records · Saved: ${d.csv_info.saved_at}`;
           document.getElementById("csvSubtitle").textContent = useLive
             ? `${d.csv_info.valid_records.toLocaleString()} CSV + Live History · Auto 3s Sync`
             : `${d.csv_info.valid_records.toLocaleString()} CSV Only · Auto 3s Sync`;
+        } else {
+          document.getElementById("csvName").textContent = "Active CSV: Koi CSV upload nahi hai";
+          document.getElementById("csvDetails").textContent = "Prediction ke liye pehle CSV upload karein";
+          document.getElementById("csvSubtitle").textContent = "CSV upload karein prediction shuru karne ke liye";
         }
 
         document.getElementById("nextPeriod").textContent = d.next_period || "—";
@@ -590,14 +634,19 @@
 
         const predBox = document.getElementById("predBox");
         predBox.className = "pred-center " + (d.prediction || "");
-        document.getElementById("predValue").textContent = d.prediction || (d.status === "Live" ? "NO MATCH" : "—");
 
-        if (d.total_matches > 0) {
-          const liveTxt = (useLive && d.live_matches > 0) ? ` (+${d.live_matches} Live)` : "";
-          document.getElementById("matchMeta").textContent =
-            `Total Matches: ${d.total_matches}${liveTxt}`;
-        } else if (d.status === "Live") {
-          document.getElementById("matchMeta").textContent = "Is pair ka koi match nahi mila (No Dummy Prediction)";
+        if (!d.csv_loaded) {
+          document.getElementById("predValue").textContent = "UPLOAD CSV";
+          document.getElementById("matchMeta").textContent = "Pehle CSV file upload karein, tabhi prediction aayegi.";
+        } else {
+          document.getElementById("predValue").textContent = d.prediction || (d.status === "Live" ? "NO MATCH" : "—");
+          if (d.total_matches > 0) {
+            const liveTxt = (useLive && d.live_matches > 0) ? ` (+${d.live_matches} Live)` : "";
+            document.getElementById("matchMeta").textContent =
+              `Total Matches: ${d.total_matches}${liveTxt}`;
+          } else if (d.status === "Live") {
+            document.getElementById("matchMeta").textContent = "Is pair ka koi match nahi mila (No Dummy Prediction)";
+          }
         }
 
         document.getElementById("bigLabel").textContent = `BIG: ${d.big_votes} (${d.big_pct}%)`;
@@ -639,29 +688,29 @@
 
         const notesList = document.getElementById("notesList");
         if (notes.length === 0) {
-          notesList.innerHTML = '<div class="empty">Jab 3–4 level ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>';
+          notesList.innerHTML = '<div class="empty">Jab max 3–4 loss ke andar lagatar winning chalegi, tab yahan auto note aayega.</div>';
         } else {
           notesList.innerHTML = notes.map(n => `
             <div class="note-item ${n.active ? "active-note" : ""}">
               <div class="note-top">
-                <span class="note-time">${n.start_time} – ${n.end_time} (${n.duration_min} min)</span>
+                <span class="note-time">${n.date_label}${n.day ? " (" + n.day + ")" : ""} · ${n.start_time} – ${n.end_time}</span>
                 <span class="badge ${n.active ? "badge-WIN" : "badge-PENDING"}">
-                  ${n.active ? "Active Good Time" : "Max Level " + n.max_level}
+                  ${n.active ? "Active (" + n.duration_min + " min)" : n.duration_min + " min"}
                 </span>
               </div>
               <div class="note-sub">
-                Wins: <b>${n.wins}</b> · Losses: <b>${n.losses}</b> · Win Rate: <b>${n.win_rate}%</b> · Max Level: <b>L${n.max_level}</b>
+                Wins: <b>${n.wins}</b> · Losses: <b>${n.losses}</b> · Win Rate: <b>${n.win_rate}%</b> · Max Loss: <b>${n.max_loss}</b>
               </div>
             </div>
           `).join("");
         }
 
-        // 3. Render Strong Time & Strong Day
+        // 3. Render Strong Time & Daily Analysis
         const st = d.strong_times || {};
         if (st.best_hour) {
           document.getElementById("bestHourVal").textContent = st.best_hour.slot;
           document.getElementById("bestHourSub").textContent =
-            `${st.best_hour.win_rate}% Win · ${st.best_hour.strong_days}/${st.best_hour.days_tracked} din strong`;
+            `${st.best_hour.win_rate}% Win · Max Loss: ${st.best_hour.max_loss_streak} · ${st.best_hour.strong_days}/${st.best_hour.days_tracked} din strong`;
         } else {
           document.getElementById("bestHourVal").textContent = "—";
           document.getElementById("bestHourSub").textContent = "Data collect ho raha hai...";
@@ -670,7 +719,7 @@
         if (st.best_day) {
           document.getElementById("bestDayVal").textContent = st.best_day.day;
           document.getElementById("bestDaySub").textContent =
-            `${st.best_day.win_rate}% Win · ${st.best_day.wins}W / ${st.best_day.losses}L`;
+            `${st.best_day.win_rate}% Win · Max Loss: ${st.best_day.max_loss_streak} · ${st.best_day.wins}W/${st.best_day.losses}L`;
         } else {
           document.getElementById("bestDayVal").textContent = "—";
           document.getElementById("bestDaySub").textContent = "Data collect ho raha hai...";
@@ -684,13 +733,33 @@
           hoursEl.innerHTML = hours.map(h => `
             <div class="note-item ${h.is_strong ? "active-note" : ""}">
               <div class="note-top">
-                <span class="note-time">${h.slot}</span>
-                <span class="badge ${h.is_strong ? "badge-WIN" : "badge-PENDING"}">
-                  ${h.is_strong ? "Strong Time" : h.win_rate + "%"}
+                <span class="note-time">${h.slot} (~${h.avg_duration_min} min/day)</span>
+                <span class="badge ${h.is_strong ? "badge-WIN" : "badge-LOSS"}">
+                  ${h.is_strong ? "Strong (Max " + h.max_loss_streak + "L)" : "Max " + h.max_loss_streak + "L"}
                 </span>
               </div>
               <div class="note-sub">
-                Win Rate: <b>${h.win_rate}%</b> (${h.wins}W / ${h.losses}L) · Max Loss Streak: <b>${h.max_loss_streak}</b> · Strong Days: <b>${h.strong_days}/${h.days_tracked}</b>
+                Win Rate: <b>${h.win_rate}%</b> (${h.wins}W / ${h.losses}L) · Strong Days: <b>${h.strong_days}/${h.days_tracked}</b>
+              </div>
+            </div>
+          `).join("");
+        }
+
+        const dailyEl = document.getElementById("dailyHoursList");
+        const dailyHours = st.daily_hours || [];
+        if (dailyHours.length === 0) {
+          dailyEl.innerHTML = '<div class="empty">Abhi daily record nahi hai.</div>';
+        } else {
+          dailyEl.innerHTML = dailyHours.map(dh => `
+            <div class="note-item ${dh.is_strong ? "active-note" : ""}">
+              <div class="note-top">
+                <span class="note-time">${dh.date_label}${dh.day ? " (" + dh.day + ")" : ""} · ${dh.slot}</span>
+                <span class="badge ${dh.is_strong ? "badge-WIN" : "badge-PENDING"}">
+                  ${dh.is_strong ? "Strong · " + dh.duration_min + " min" : dh.duration_min + " min"}
+                </span>
+              </div>
+              <div class="note-sub">
+                Win Rate: <b>${dh.win_rate}%</b> (${dh.wins}W / ${dh.losses}L) · Max Loss: <b>${dh.max_loss_streak}</b>
               </div>
             </div>
           `).join("");
@@ -706,15 +775,21 @@
               <div class="note-top">
                 <span class="note-time">${day.day}</span>
                 <span class="badge ${day.is_strong ? "badge-WIN" : "badge-PENDING"}">
-                  ${day.is_strong ? "Strong Day" : day.win_rate + "%"}
+                  ${day.is_strong ? "Strong Day" : "Max " + day.max_loss_streak + "L"}
                 </span>
               </div>
               <div class="note-sub">
-                Win Rate: <b>${day.win_rate}%</b> (${day.wins}W / ${day.losses}L) · Max Loss Streak: <b>${day.max_loss_streak}</b> · Days Count: <b>${day.dates_count}</b>
+                Win Rate: <b>${day.win_rate}%</b> (${day.wins}W / ${day.losses}L) · Max Loss: <b>${day.max_loss_streak}</b> · Days: <b>${day.dates_count}</b>
               </div>
             </div>
           `).join("");
         }
+
+        // 4. Render Exact Spots (Max <= 2 Loss)
+        const ex = d.exact_spots || {};
+        renderExactList("exactClocksList", ex.exact_clocks, "Data collect hone par exact clock times yahan dikhenge.");
+        renderExactList("exactMinutesList", ex.exact_minutes, "Data collect hone par har ghante ke best minutes yahan dikhenge.");
+        renderExactList("exactPeriodsList", ex.exact_periods, "Jab same daily period number 2+ baar aayega, tab yahan dikhega.");
       } catch (err) {
         document.getElementById("statusDot").classList.remove("live");
         document.getElementById("statusText").textContent = "Server Offline";
@@ -757,7 +832,7 @@
     }
 
     async function clearHistory() {
-      if (!confirm("Kya aap puri prediction history, notes aur strong time data clear karna chahte hain?")) return;
+      if (!confirm("Kya aap puri prediction history, notes aur analysis clear karna chahte hain?")) return;
       await fetch("/api/clear", { method: "POST" });
       fetchState();
     }
