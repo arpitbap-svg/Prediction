@@ -16,39 +16,20 @@ STATS_FILE = "saved_pair_stats.json"
 SETTINGS_FILE = "app_settings.json"
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Default 16,906 valid CSV records (fallback)
-DEFAULT_PAIR_STATS = {
-    "0-0":{"big":85,"small":102},"0-1":{"big":80,"small":94},"0-2":{"big":100,"small":84},"0-3":{"big":73,"small":85},"0-4":{"big":81,"small":80},
-    "0-5":{"big":87,"small":88},"0-6":{"big":75,"small":91},"0-7":{"big":95,"small":77},"0-8":{"big":97,"small":89},"0-9":{"big":80,"small":84},
-    "1-0":{"big":92,"small":101},"1-1":{"big":92,"small":86},"1-2":{"big":96,"small":98},"1-3":{"big":84,"small":82},"1-4":{"big":88,"small":74},
-    "1-5":{"big":84,"small":81},"1-6":{"big":91,"small":89},"1-7":{"big":94,"small":80},"1-8":{"big":99,"small":73},"1-9":{"big":85,"small":91},
-    "2-0":{"big":85,"small":78},"2-1":{"big":89,"small":80},"2-2":{"big":83,"small":84},"2-3":{"big":97,"small":80},"2-4":{"big":72,"small":79},
-    "2-5":{"big":95,"small":86},"2-6":{"big":66,"small":103},"2-7":{"big":87,"small":99},"2-8":{"big":79,"small":78},"2-9":{"big":85,"small":85},
-    "3-0":{"big":78,"small":83},"3-1":{"big":74,"small":72},"3-2":{"big":80,"small":87},"3-3":{"big":92,"small":61},"3-4":{"big":79,"small":74},
-    "3-5":{"big":73,"small":93},"3-6":{"big":73,"small":108},"3-7":{"big":63,"small":97},"3-8":{"big":84,"small":102},"3-9":{"big":74,"small":75},
-    "4-0":{"big":79,"small":90},"4-1":{"big":62,"small":83},"4-2":{"big":85,"small":75},"4-3":{"big":105,"small":82},"4-4":{"big":77,"small":73},
-    "4-5":{"big":84,"small":80},"4-6":{"big":80,"small":79},"4-7":{"big":72,"small":84},"4-8":{"big":80,"small":93},"4-9":{"big":87,"small":93},
-    "5-0":{"big":76,"small":81},"5-1":{"big":96,"small":97},"5-2":{"big":90,"small":70},"5-3":{"big":74,"small":77},"5-4":{"big":79,"small":83},
-    "5-5":{"big":85,"small":75},"5-6":{"big":105,"small":82},"5-7":{"big":84,"small":82},"5-8":{"big":90,"small":91},"5-9":{"big":81,"small":94},
-    "6-0":{"big":90,"small":85},"6-1":{"big":105,"small":98},"6-2":{"big":73,"small":75},"6-3":{"big":60,"small":82},"6-4":{"big":84,"small":103},
-    "6-5":{"big":88,"small":84},"6-6":{"big":70,"small":82},"6-7":{"big":81,"small":87},"6-8":{"big":86,"small":79},"6-9":{"big":81,"small":71},
-    "7-0":{"big":90,"small":65},"7-1":{"big":98,"small":102},"7-2":{"big":86,"small":96},"7-3":{"big":86,"small":72},"7-4":{"big":99,"small":81},
-    "7-5":{"big":93,"small":69},"7-6":{"big":90,"small":65},"7-7":{"big":80,"small":78},"7-8":{"big":83,"small":85},"7-9":{"big":86,"small":80},
-    "8-0":{"big":105,"small":97},"8-1":{"big":79,"small":91},"8-2":{"big":86,"small":79},"8-3":{"big":86,"small":79},"8-4":{"big":93,"small":79},
-    "8-5":{"big":90,"small":90},"8-6":{"big":75,"small":75},"8-7":{"big":84,"small":101},"8-8":{"big":85,"small":89},"8-9":{"big":95,"small":77},
-    "9-0":{"big":83,"small":82},"9-1":{"big":92,"small":90},"9-2":{"big":84,"small":79},"9-3":{"big":85,"small":80},"9-4":{"big":80,"small":85},
-    "9-5":{"big":90,"small":78},"9-6":{"big":84,"small":81},"9-7":{"big":69,"small":90},"9-8":{"big":78,"small":95},"9-9":{"big":93,"small":89}
-}
+MAX_STRONG_LOSS = 4      # Strong Time tab ke liye max 4 loss
+MAX_EXACT_SPOT_LOSS = 2  # Exact Spots tab ke liye max 2 loss
 
 state_lock = threading.Lock()
 worker_lock = threading.Lock()
 worker_started = False
 
-pair_stats = DEFAULT_PAIR_STATS.copy()
+# Koi default CSV data nahi hai — upload karne ke baad hi load hoga
+pair_stats = {}
+csv_loaded = False
 csv_info = {
-    "filename": "Default Embedded CSV",
-    "valid_records": 16906,
-    "saved_at": "Built-in"
+    "filename": None,
+    "valid_records": 0,
+    "saved_at": None
 }
 
 settings = {
@@ -93,14 +74,15 @@ def save_settings():
 
 
 def load_saved_stats():
-    global pair_stats, csv_info
+    global pair_stats, csv_info, csv_loaded
     if os.path.exists(STATS_FILE):
         try:
             with open(STATS_FILE, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-                if "pair_stats" in saved and "csv_info" in saved:
+                if saved.get("pair_stats") and saved.get("csv_info", {}).get("filename"):
                     pair_stats = saved["pair_stats"]
                     csv_info = saved["csv_info"]
+                    csv_loaded = True
         except Exception:
             pass
 
@@ -200,7 +182,15 @@ def extract_row_time_info(row):
     if ts:
         try:
             dt = datetime.fromtimestamp(int(ts), tz=IST)
-            return dt.hour, dt.strftime("%Y-%m-%d"), dt.strftime("%A")
+            return (
+                dt.hour,
+                dt.minute,
+                dt.strftime("%I:%M %p"),
+                dt.strftime("%Y-%m-%d"),
+                dt.strftime("%d %b"),
+                dt.strftime("%A"),
+                int(ts)
+            )
         except Exception:
             pass
 
@@ -208,10 +198,10 @@ def extract_row_time_info(row):
     if t_str:
         try:
             dt = datetime.strptime(t_str, "%I:%M:%S %p")
-            return dt.hour, "Saved", None
+            return dt.hour, dt.minute, dt.strftime("%I:%M %p"), "Saved", "Saved", None, None
         except Exception:
             pass
-    return None, None, None
+    return None, None, None, None, None, None, None
 
 
 def get_live_pair_votes(history, pair_key):
@@ -236,7 +226,7 @@ def compute_good_time_notes(history):
         if not s:
             return
         total = s["wins"] + s["losses"]
-        if s["wins"] >= 3 and total >= 5:
+        if s["wins"] >= 3 and total >= 5 and s["max_loss"] <= MAX_STRONG_LOSS:
             win_rate = round((s["wins"] / total) * 100, 1)
             if s["start_ts"] and s["end_ts"]:
                 dur_mins = max(1, round((s["end_ts"] - s["start_ts"]) / 60))
@@ -244,6 +234,8 @@ def compute_good_time_notes(history):
                 dur_mins = max(1, round((total * 30) / 60))
 
             notes.append({
+                "date_label": s["date_label"],
+                "day": s["day"] or "",
                 "start_time": s["start_time"],
                 "end_time": "Now" if is_active else s["end_time"],
                 "duration_min": dur_mins,
@@ -251,7 +243,7 @@ def compute_good_time_notes(history):
                 "losses": s["losses"],
                 "total": total,
                 "win_rate": win_rate,
-                "max_level": s["max_level"],
+                "max_loss": s["max_loss"],
                 "active": is_active
             })
 
@@ -261,40 +253,41 @@ def compute_good_time_notes(history):
     for row in settled:
         st = row["status"]
         t_str = row.get("time", "--:--")
-        ts = row.get("ts")
+        _, _, _, _, date_label, weekday, ts = extract_row_time_info(row)
 
         if seg is None:
             if st == "WIN":
                 seg = {
+                    "date_label": date_label or "Today",
+                    "day": weekday[:3] if weekday else "",
                     "start_time": t_str,
                     "end_time": t_str,
                     "start_ts": ts,
                     "end_ts": ts,
                     "wins": 1,
                     "losses": 0,
-                    "max_level": 1
+                    "max_loss": 0
                 }
                 consec_losses = 0
                 pending_losses = 0
             else:
                 consec_losses += 1
-                if consec_losses >= 4:
+                if consec_losses > MAX_STRONG_LOSS:
                     consec_losses = 0
         else:
             if st == "WIN":
-                level_used = consec_losses + 1
                 seg["wins"] += 1
                 seg["losses"] += pending_losses
                 seg["end_time"] = t_str
                 seg["end_ts"] = ts
-                if level_used > seg["max_level"]:
-                    seg["max_level"] = level_used
+                if consec_losses > seg["max_loss"]:
+                    seg["max_loss"] = consec_losses
                 consec_losses = 0
                 pending_losses = 0
             else:
                 consec_losses += 1
                 pending_losses += 1
-                if consec_losses >= 4:
+                if consec_losses > MAX_STRONG_LOSS:
                     finalize_segment(seg, is_active=False)
                     seg = None
                     consec_losses = 0
@@ -312,18 +305,15 @@ def compute_strong_times(history):
 
     hour_buckets = {}
     day_buckets = {}
+    daily_hour_buckets = {}
 
     for row in settled:
         st = row["status"]
-        hour, date_str, weekday = extract_row_time_info(row)
+        hour, _, _, date_key, date_label, weekday, ts = extract_row_time_info(row)
 
         if hour is not None:
             hb = hour_buckets.setdefault(hour, {
-                "wins": 0,
-                "losses": 0,
-                "cur_loss": 0,
-                "max_loss": 0,
-                "by_date": {}
+                "wins": 0, "losses": 0, "cur_loss": 0, "max_loss": 0, "by_date": {}
             })
             if st == "WIN":
                 hb["wins"] += 1
@@ -334,8 +324,10 @@ def compute_strong_times(history):
                 if hb["cur_loss"] > hb["max_loss"]:
                     hb["max_loss"] = hb["cur_loss"]
 
-            if date_str:
-                db = hb["by_date"].setdefault(date_str, {"wins": 0, "losses": 0, "cur_loss": 0, "max_loss": 0})
+            if date_key:
+                db = hb["by_date"].setdefault(date_key, {
+                    "wins": 0, "losses": 0, "cur_loss": 0, "max_loss": 0, "min_ts": ts, "max_ts": ts
+                })
                 if st == "WIN":
                     db["wins"] += 1
                     db["cur_loss"] = 0
@@ -344,14 +336,36 @@ def compute_strong_times(history):
                     db["cur_loss"] += 1
                     if db["cur_loss"] > db["max_loss"]:
                         db["max_loss"] = db["cur_loss"]
+                if ts:
+                    if db["min_ts"] is None or ts < db["min_ts"]:
+                        db["min_ts"] = ts
+                    if db["max_ts"] is None or ts > db["max_ts"]:
+                        db["max_ts"] = ts
+
+                dh_key = f"{date_key}_{hour:02d}"
+                dh = daily_hour_buckets.setdefault(dh_key, {
+                    "date_key": date_key, "date_label": date_label or date_key,
+                    "day": weekday[:3] if weekday else "", "hour": hour,
+                    "slot": format_hour_slot(hour), "wins": 0, "losses": 0,
+                    "cur_loss": 0, "max_loss": 0, "min_ts": ts, "max_ts": ts
+                })
+                if st == "WIN":
+                    dh["wins"] += 1
+                    dh["cur_loss"] = 0
+                else:
+                    dh["losses"] += 1
+                    dh["cur_loss"] += 1
+                    if dh["cur_loss"] > dh["max_loss"]:
+                        dh["max_loss"] = dh["cur_loss"]
+                if ts:
+                    if dh["min_ts"] is None or ts < dh["min_ts"]:
+                        dh["min_ts"] = ts
+                    if dh["max_ts"] is None or ts > dh["max_ts"]:
+                        dh["max_ts"] = ts
 
         if weekday:
             wb = day_buckets.setdefault(weekday, {
-                "wins": 0,
-                "losses": 0,
-                "cur_loss": 0,
-                "max_loss": 0,
-                "dates": set()
+                "wins": 0, "losses": 0, "cur_loss": 0, "max_loss": 0, "dates": set()
             })
             if st == "WIN":
                 wb["wins"] += 1
@@ -361,23 +375,28 @@ def compute_strong_times(history):
                 wb["cur_loss"] += 1
                 if wb["cur_loss"] > wb["max_loss"]:
                     wb["max_loss"] = wb["cur_loss"]
-            if date_str:
-                wb["dates"].add(date_str)
+            if date_key:
+                wb["dates"].add(date_key)
 
     hourly_list = []
     for h, hb in hour_buckets.items():
         total = hb["wins"] + hb["losses"]
         win_rate = round((hb["wins"] / total) * 100, 1) if total > 0 else 0.0
-
         days_tracked = len(hb["by_date"])
         strong_days = 0
+        total_dur = 0
         for d_stat in hb["by_date"].values():
             d_tot = d_stat["wins"] + d_stat["losses"]
             d_wr = (d_stat["wins"] / d_tot) * 100 if d_tot > 0 else 0
-            if d_tot >= 3 and (d_wr >= 55 or (d_stat["max_loss"] <= 3 and d_wr >= 50)):
+            if d_tot >= 4 and d_stat["max_loss"] <= MAX_STRONG_LOSS and d_wr >= 50:
                 strong_days += 1
+            if d_stat["min_ts"] and d_stat["max_ts"]:
+                total_dur += max(1, round((d_stat["max_ts"] - d_stat["min_ts"]) / 60))
+            else:
+                total_dur += max(1, round((d_tot * 30) / 60))
 
-        is_strong = total >= 5 and (win_rate >= 55.0 or (hb["max_loss"] <= 3 and win_rate >= 50.0))
+        avg_dur = round(total_dur / days_tracked) if days_tracked > 0 else 0
+        is_strong = total >= 5 and hb["max_loss"] <= MAX_STRONG_LOSS and win_rate >= 50.0
 
         hourly_list.append({
             "hour": h,
@@ -389,16 +408,44 @@ def compute_strong_times(history):
             "max_loss_streak": hb["max_loss"],
             "days_tracked": days_tracked,
             "strong_days": strong_days,
+            "avg_duration_min": avg_dur,
             "is_strong": is_strong
         })
 
-    hourly_list.sort(key=lambda x: (x["is_strong"], x["strong_days"], x["win_rate"], x["total"]), reverse=True)
+    hourly_list.sort(key=lambda x: (x["is_strong"], x["strong_days"], -x["max_loss_streak"], x["win_rate"], x["total"]), reverse=True)
+
+    daily_hours_list = []
+    for dh in daily_hour_buckets.values():
+        total = dh["wins"] + dh["losses"]
+        win_rate = round((dh["wins"] / total) * 100, 1) if total > 0 else 0.0
+        if dh["min_ts"] and dh["max_ts"]:
+            dur_min = max(1, round((dh["max_ts"] - dh["min_ts"]) / 60))
+        else:
+            dur_min = max(1, round((total * 30) / 60))
+        is_strong = total >= 4 and dh["max_loss"] <= MAX_STRONG_LOSS and win_rate >= 50.0
+
+        daily_hours_list.append({
+            "date_key": dh["date_key"],
+            "date_label": dh["date_label"],
+            "day": dh["day"],
+            "hour": dh["hour"],
+            "slot": dh["slot"],
+            "wins": dh["wins"],
+            "losses": dh["losses"],
+            "total": total,
+            "win_rate": win_rate,
+            "max_loss_streak": dh["max_loss"],
+            "duration_min": dur_min,
+            "is_strong": is_strong
+        })
+
+    daily_hours_list.sort(key=lambda x: (x["date_key"], x["hour"]), reverse=True)
 
     day_list = []
     for day_name, wb in day_buckets.items():
         total = wb["wins"] + wb["losses"]
         win_rate = round((wb["wins"] / total) * 100, 1) if total > 0 else 0.0
-        is_strong = total >= 5 and (win_rate >= 55.0 or (wb["max_loss"] <= 3 and win_rate >= 50.0))
+        is_strong = total >= 5 and wb["max_loss"] <= MAX_STRONG_LOSS and win_rate >= 50.0
         day_list.append({
             "day": day_name,
             "wins": wb["wins"],
@@ -410,18 +457,84 @@ def compute_strong_times(history):
             "is_strong": is_strong
         })
 
-    day_list.sort(key=lambda x: (x["is_strong"], x["win_rate"], x["total"]), reverse=True)
+    day_list.sort(key=lambda x: (x["is_strong"], -x["max_loss_streak"], x["win_rate"], x["total"]), reverse=True)
+
+    strong_hours_only = [h for h in hourly_list if h["is_strong"]]
+    strong_days_only = [d for d in day_list if d["is_strong"]]
 
     return {
-        "best_hour": hourly_list[0] if hourly_list else None,
-        "best_day": day_list[0] if day_list else None,
+        "best_hour": strong_hours_only[0] if strong_hours_only else (hourly_list[0] if hourly_list else None),
+        "best_day": strong_days_only[0] if strong_days_only else (day_list[0] if day_list else None),
         "hours": hourly_list,
+        "daily_hours": daily_hours_list,
         "days": day_list
     }
 
 
+def compute_exact_spots(history):
+    settled = [r for r in reversed(history) if r.get("status") in ("WIN", "LOSS")]
+
+    clock_buckets = {}
+    minute_buckets = {}
+    period_buckets = {}
+
+    def update_bucket(store, key, st):
+        b = store.setdefault(key, {"wins": 0, "losses": 0, "cur_loss": 0, "max_loss": 0})
+        if st == "WIN":
+            b["wins"] += 1
+            b["cur_loss"] = 0
+        else:
+            b["losses"] += 1
+            b["cur_loss"] += 1
+            if b["cur_loss"] > b["max_loss"]:
+                b["max_loss"] = b["cur_loss"]
+
+    for row in settled:
+        st = row["status"]
+        _, minute, clock_hm, _, _, _, _ = extract_row_time_info(row)
+
+        if clock_hm:
+            update_bucket(clock_buckets, clock_hm, st)
+        if minute is not None:
+            update_bucket(minute_buckets, f":{minute:02d} min", st)
+
+        period_str = str(row.get("period") or "")
+        if len(period_str) >= 4:
+            p_code = f"#{period_str[-4:]}"
+            update_bucket(period_buckets, p_code, st)
+
+    def format_buckets(store, min_total=2):
+        items = []
+        for label, b in store.items():
+            total = b["wins"] + b["losses"]
+            if total < min_total:
+                continue
+            win_rate = round((b["wins"] / total) * 100, 1)
+            if b["max_loss"] <= MAX_EXACT_SPOT_LOSS and win_rate >= 60.0:
+                items.append({
+                    "label": label,
+                    "wins": b["wins"],
+                    "losses": b["losses"],
+                    "total": total,
+                    "win_rate": win_rate,
+                    "max_loss": b["max_loss"],
+                    "back_to_back": b["losses"] == 0 and b["wins"] >= 2
+                })
+        items.sort(key=lambda x: (x["back_to_back"], -x["max_loss"], x["win_rate"], x["wins"]), reverse=True)
+        return items[:25]
+
+    return {
+        "exact_clocks": format_buckets(clock_buckets, min_total=2),
+        "exact_minutes": format_buckets(minute_buckets, min_total=3),
+        "exact_periods": format_buckets(period_buckets, min_total=2)
+    }
+
+
 def calculate_votes_for_pair(pair_key, history):
-    """Toggle ke hisaab se sirf CSV ya CSV + Live History se votes nikaalein."""
+    # Jab tak CSV upload nahi hoti, koi prediction nahi deni hai
+    if not csv_loaded:
+        return 0, 0, 0, 0, 0.0, 0.0, None
+
     csv_votes = pair_stats.get(pair_key, {"big": 0, "small": 0})
     big_v = csv_votes["big"]
     small_v = csv_votes["small"]
@@ -435,7 +548,6 @@ def calculate_votes_for_pair(pair_key, history):
 
     total = big_v + small_v
     if total == 0:
-        # Koi dummy prediction nahi deni hai
         return 0, 0, 0, 0, 0.0, 0.0, None
 
     big_pct = round((big_v / total) * 100, 1)
@@ -463,7 +575,6 @@ def process_api_data(draw_list):
     now_ts = int(now_dt.timestamp())
 
     with state_lock:
-        # 1. Pending predictions ka WIN/LOSS check karein
         changed = False
         for row in state["history"]:
             if row["status"] == "PENDING" and row["period"] in result_map:
@@ -474,13 +585,12 @@ def process_api_data(draw_list):
                 row["status"] = "WIN" if row["prediction"] == actual_size else "LOSS"
                 changed = True
 
-        # 2. Votes calculate karein (Toggle ke hisaab se)
         big_v, small_v, total, live_total, big_pct, small_pct, pred = calculate_votes_for_pair(
             pair_key, state["history"]
         )
 
-        # 3. Sirf valid prediction hone par hi history mein add karein (No dummy prediction)
-        if pred is not None:
+        # Sirf CSV uploaded hone aur valid prediction milne par hi history mein save karein
+        if csv_loaded and pred is not None:
             existing_periods = {row["period"] for row in state["history"]}
             if next_period not in existing_periods:
                 state["history"].insert(0, {
@@ -498,7 +608,7 @@ def process_api_data(draw_list):
         if changed:
             save_history(state["history"])
 
-        state["status"] = "Live"
+        state["status"] = "Live" if csv_loaded else "Upload CSV"
         state["last_updated"] = now_str
         state["latest_period"] = latest_period
         state["next_period"] = next_period
@@ -591,9 +701,11 @@ def api_state():
         win_rate = round((wins / total_settled) * 100, 1) if total_settled > 0 else 0.0
         good_notes = compute_good_time_notes(state["history"])
         strong_times = compute_strong_times(state["history"])
+        exact_spots = compute_exact_spots(state["history"])
 
         return jsonify({
             **state,
+            "csv_loaded": csv_loaded,
             "csv_info": csv_info,
             "use_live_history": settings["use_live_history"],
             "wins": wins,
@@ -602,7 +714,8 @@ def api_state():
             "max_win_streak": max_win_streak,
             "max_loss_streak": max_loss_streak,
             "notes": good_notes,
-            "strong_times": strong_times
+            "strong_times": strong_times,
+            "exact_spots": exact_spots
         })
 
 
@@ -615,8 +728,7 @@ def toggle_live_history():
         settings["use_live_history"] = new_val
         save_settings()
 
-        # Current pair ke votes turant recalculate karein
-        if state["pair"]:
+        if csv_loaded and state["pair"]:
             pair_key = f"{state['pair'][0]}-{state['pair'][1]}"
             big_v, small_v, total, live_total, big_pct, small_pct, pred = calculate_votes_for_pair(
                 pair_key, state["history"]
@@ -634,7 +746,7 @@ def toggle_live_history():
 
 @app.route("/api/upload-csv", methods=["POST"])
 def upload_csv():
-    global pair_stats, csv_info
+    global pair_stats, csv_info, csv_loaded
     if "file" not in request.files:
         return jsonify({"ok": False, "error": "Koi CSV file select nahi ki gayi."}), 400
 
@@ -645,16 +757,33 @@ def upload_csv():
     try:
         content = file.read().decode("utf-8-sig", errors="ignore")
         new_stats, valid_count = parse_csv_content(content)
+        now_dt = datetime.now(IST)
         new_info = {
             "filename": file.filename,
             "valid_records": valid_count,
-            "saved_at": datetime.now(IST).strftime("%d %b, %I:%M %p")
+            "saved_at": now_dt.strftime("%d %b, %I:%M %p")
         }
 
         with state_lock:
             pair_stats = new_stats
             csv_info = new_info
+            csv_loaded = True
             save_stats_to_disk(new_stats, new_info)
+
+            # CSV upload hote hi current pair par turant prediction calculate karein
+            if state["pair"]:
+                pair_key = f"{state['pair'][0]}-{state['pair'][1]}"
+                big_v, small_v, total, live_total, big_pct, small_pct, pred = calculate_votes_for_pair(
+                    pair_key, state["history"]
+                )
+                state["status"] = "Live"
+                state["prediction"] = pred
+                state["big_votes"] = big_v
+                state["small_votes"] = small_v
+                state["total_matches"] = total
+                state["live_matches"] = live_total
+                state["big_pct"] = big_pct
+                state["small_pct"] = small_pct
 
         return jsonify({"ok": True, "csv_info": new_info})
     except Exception as e:
